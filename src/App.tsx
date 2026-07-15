@@ -85,17 +85,6 @@ export default function App() {
         : `Parcours — ${activeTree?.title ?? 'Arbre de décision'}`
     document.title = `TreeBoard | ${page}`
   }, [activeTree?.title, screen])
-  useEffect(() => {
-    const handler = (event: KeyboardEvent) => {
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
-        event.preventDefault()
-        if (activeTree) void saveTree(activeTree)
-      }
-    }
-    addEventListener('keydown', handler)
-    return () => removeEventListener('keydown', handler)
-  }, [activeTree, saveTree])
-
   if (!loaded) return <main className="loading" data-theme={theme}><Logo /><span>Chargement de votre espace local…</span></main>
 
   const openTree = (tree: DecisionTree) => { setActiveTree(tree); setScreen('editor') }
@@ -155,21 +144,50 @@ function Editor({ tree, trees, onBack, onSave, onRun, theme, toggleTheme }: { tr
   const undoStack = useRef<DecisionTree[]>([])
   const redoStack = useRef<DecisionTree[]>([])
   const [selected, setSelected] = useState<string | undefined>()
+  const [selectedEdgeId, setSelectedEdgeId] = useState<string | undefined>()
   const [inspectorTab, setInspectorTab] = useState<'tree' | 'node'>('tree')
   const [inspectorWidth, setInspectorWidth] = useState(336)
   const [isResizingInspector, setIsResizingInspector] = useState(false)
+  const [saveStatus, setSaveStatus] = useState<'saved' | 'saving'>('saved')
   const editorRef = useRef<HTMLElement>(null)
+  const latestDraft = useRef(draft)
+  const autoSaveQueue = useRef(Promise.resolve())
+  const hasPendingAutoSave = useRef(false)
+  const skipNextAutoSave = useRef(false)
+  const saveRevision = useRef(0)
+  const enqueueSave = useCallback((next: DecisionTree) => {
+    const revision = ++saveRevision.current
+    setSaveStatus('saving')
+    const save = autoSaveQueue.current.catch(() => undefined).then(() => onSave(next))
+    autoSaveQueue.current = save
+    void save.then(() => { if (saveRevision.current === revision) setSaveStatus('saved') })
+    return save
+  }, [onSave])
   const issues = useMemo(() => validateTree(draft, trees), [draft, trees])
   const flowNodes = useMemo(() => draft.nodes.map((node): Node => ({ id: node.id, type: 'decision', position: node.position, data: { node } })), [draft.nodes])
   const flowEdges = useMemo(() => draft.edges.map((edge): Edge => {
     const source = draft.nodes.find((node) => node.id === edge.source)
     const choice = source?.choices?.find((item) => item.value === edge.choiceValue)
-    return { id: edge.id, source: edge.source, target: edge.target, sourceHandle: edge.sourceHandle ?? 'source-bottom', targetHandle: edge.targetHandle ?? 'target-top', data: { choiceValue: edge.choiceValue }, ...(choice ? { label: choice.label } : {}), labelBgPadding: [6, 3], labelBgBorderRadius: 5, labelBgStyle: { fill: 'var(--surface)', stroke: 'var(--border-strong)', strokeWidth: 1 }, labelStyle: { fill: 'var(--text-secondary)', fontSize: 10, fontFamily: 'IBM Plex Mono, monospace' }, markerEnd: { type: MarkerType.ArrowClosed, color: '#a8adb5' }, style: { stroke: '#a8adb5', strokeWidth: 1.6 }, type: 'smoothstep' }
-  }), [draft.edges, draft.nodes])
+    const isSelected = edge.id === selectedEdgeId
+    return { id: edge.id, source: edge.source, target: edge.target, sourceHandle: edge.sourceHandle ?? 'source-bottom', targetHandle: edge.targetHandle ?? 'target-top', data: { choiceValue: edge.choiceValue }, ...(choice ? { label: choice.label } : {}), selected: isSelected, labelBgPadding: [6, 3], labelBgBorderRadius: 5, labelBgStyle: { fill: isSelected ? 'var(--brand-tint)' : 'var(--surface)', stroke: isSelected ? 'var(--brand)' : 'var(--border-strong)', strokeWidth: 1 }, labelStyle: { fill: isSelected ? 'var(--brand)' : 'var(--text-secondary)', fontSize: 10, fontFamily: 'IBM Plex Mono, monospace' }, markerEnd: { type: MarkerType.ArrowClosed, color: isSelected ? 'var(--brand)' : '#a8adb5' }, style: { stroke: isSelected ? 'var(--brand)' : '#a8adb5', strokeWidth: isSelected ? 3 : 1.6 }, type: 'smoothstep' }
+  }), [draft.edges, draft.nodes, selectedEdgeId])
   const [nodes, setNodes, onNodesChange] = useNodesState(flowNodes)
   const [edges, setEdges, onEdgesChange] = useEdgesState(flowEdges)
 
   useEffect(() => { setNodes(flowNodes); setEdges(flowEdges) }, [flowEdges, flowNodes, setEdges, setNodes])
+  useEffect(() => { latestDraft.current = draft }, [draft])
+  useEffect(() => {
+    if (skipNextAutoSave.current) { skipNextAutoSave.current = false; return }
+    hasPendingAutoSave.current = true
+    const timer = window.setTimeout(() => {
+      hasPendingAutoSave.current = false
+      void enqueueSave(draft)
+    }, 300)
+    return () => window.clearTimeout(timer)
+  }, [draft, enqueueSave])
+  useEffect(() => () => {
+    if (hasPendingAutoSave.current) void enqueueSave(latestDraft.current)
+  }, [enqueueSave])
   useEffect(() => {
     if (!isResizingInspector) return
     const resizeInspector = (event: PointerEvent) => {
@@ -210,8 +228,15 @@ function Editor({ tree, trees, onBack, onSave, onRun, theme, toggleTheme }: { tr
     if (!selectedNode) return
     commitDraft((current) => removeTreeNode(current, selectedNode.id))
     setSelected(undefined)
+    setSelectedEdgeId(undefined)
     setInspectorTab('tree')
   }, [commitDraft, selectedNode])
+  const deleteEdges = useCallback((edgeIds: string[]) => {
+    if (!edgeIds.length) return
+    const ids = new Set(edgeIds)
+    commitDraft((current) => ({ ...current, edges: current.edges.filter((edge) => !ids.has(edge.id)) }))
+    setSelectedEdgeId((current) => current && ids.has(current) ? undefined : current)
+  }, [commitDraft])
   const pasteCopiedNode = useCallback(() => {
     if (!copiedNode) return
     const origin = selectedNode?.position ?? { x: 160 + draft.nodes.length * 35, y: 140 + draft.nodes.length * 25 }
@@ -230,25 +255,36 @@ function Editor({ tree, trees, onBack, onSave, onRun, theme, toggleTheme }: { tr
       if (modifier && key === 'y') { event.preventDefault(); redo(); return }
       if (modifier && key === 'c' && selectedNode) { event.preventDefault(); copiedNode = JSON.parse(JSON.stringify(selectedNode)) as TreeNode; return }
       if (modifier && key === 'v' && copiedNode) { event.preventDefault(); pasteCopiedNode(); return }
+      if (event.key === 'Delete' && selectedEdgeId) { event.preventDefault(); deleteEdges([selectedEdgeId]); return }
       if (event.key === 'Delete' && selectedNode) { event.preventDefault(); deleteSelectedNode() }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [draft, selectedNode, deleteSelectedNode, pasteCopiedNode, redo, undo])
+  }, [deleteEdges, selectedEdgeId, selectedNode, deleteSelectedNode, pasteCopiedNode, redo, undo])
   const updateNode = (patch: Partial<TreeNode>) => selectedNode && commitDraft((current) => ({ ...current, nodes: current.nodes.map((node) => node.id === selectedNode.id ? { ...node, ...patch } : node) }))
   const persist = async (): Promise<DecisionTree> => {
     const position = new Map(nodes.map((node) => [node.id, node.position]))
     const next = { ...draft, nodes: draft.nodes.map((node) => ({ ...node, position: position.get(node.id) ?? node.position })) }
+    skipNextAutoSave.current = true
+    hasPendingAutoSave.current = false
+    latestDraft.current = next
     setDraft(next)
-    await onSave(next)
+    await enqueueSave(next)
     return next
+  }
+  const leaveEditor = () => {
+    if (hasPendingAutoSave.current) {
+      hasPendingAutoSave.current = false
+      void enqueueSave(latestDraft.current)
+    }
+    onBack()
   }
   const onConnect: OnConnect = (connection: Connection) => {
     if (!connection.source || !connection.target) return
     if (connection.source === connection.target) return alert('Une étape ne peut pas être reliée à elle-même.')
     const source = draft.nodes.find((node) => node.id === connection.source)
     if (!source) return
-    if (source.kind !== 'question' && draft.edges.some((edge) => edge.source === connection.source && edge.target === connection.target)) return
+    if (source.kind !== 'question' && draft.edges.some((edge) => edge.source === connection.source)) return alert(`« ${source.title || 'Cette étape'} » ne peut avoir qu’une seule suite. Ajoutez une Question pour créer des branches.`)
     const choice = source.kind === 'question' ? source.choices?.find((item) => !draft.edges.some((edge) => edge.source === source.id && edge.choiceValue === item.value)) : undefined
     if (source.kind === 'question' && !choice) return alert('Tous les chemins de cette question sont déjà reliés. Modifiez-les dans l’onglet Étape.')
     commitDraft((current) => ({ ...current, edges: [...current.edges, { id: crypto.randomUUID(), source: connection.source!, target: connection.target!, sourceHandle: connection.sourceHandle ?? undefined, targetHandle: connection.targetHandle ?? undefined, ...(choice ? { choiceValue: choice.value } : {}) }] }))
@@ -310,21 +346,21 @@ function Editor({ tree, trees, onBack, onSave, onRun, theme, toggleTheme }: { tr
   }
 
   return <section ref={editorRef} className="editor" style={{ '--inspector-width': `${inspectorWidth}px` } as CSSProperties}>
-    <div className="editor-top"><button className="back-button" onClick={onBack} aria-label="Retour à la bibliothèque">←</button><span className="breadcrumb">Bibliothèque /</span><input className="tree-title" title={draft.title} aria-label="Titre de l’arbre" value={draft.title} onChange={(event) => commitDraft({ ...draft, title: event.target.value })} /><span className="saved">● Modifs locales</span><ThemeToggle theme={theme} onChange={toggleTheme} /><button onClick={() => void persist()}>Enregistrer</button><button className="primary" onClick={run}>Tester le parcours →</button></div>
+    <div className="editor-top"><button className="back-button" onClick={leaveEditor} aria-label="Retour à la bibliothèque">←</button><span className="breadcrumb">Bibliothèque /</span><input className="tree-title" title={draft.title} aria-label="Titre de l’arbre" value={draft.title} onChange={(event) => commitDraft({ ...draft, title: event.target.value })} /><span className={`saved ${saveStatus === 'saving' ? 'saving' : ''}`}>● {saveStatus === 'saving' ? 'Enregistrement…' : 'Enregistré automatiquement'}</span><ThemeToggle theme={theme} onChange={toggleTheme} /><button className="primary" onClick={run}>Tester le parcours →</button></div>
     <aside className="palette"><strong>Éléments</strong>{paletteKinds.map((kind) => <button key={kind} draggable title="Cliquez pour ajouter ou glissez sur le canvas pour positionner" onDragStart={(event) => event.dataTransfer.setData('application/treeboard-node', kind)} onClick={() => add(kind)}><i style={{ background: kindColor[kind] }} /><span>{nodeLabel[kind]}</span></button>)}<hr /><strong>Raccourcis</strong><p className="shortcut-help"><i>⌨</i><span>Suppr : supprimer<br />Ctrl/Cmd+Z : annuler<br />Ctrl/Cmd+Y : rétablir<br />Ctrl/Cmd+C / V : copier / coller</span></p><hr /><strong>Validation</strong>{issues.length ? issues.map((issue, index) => <p key={index} className={issue.level}><i>{issue.level === 'error' ? '!' : '△'}</i>{issue.message}</p>) : <p className="ok"><i>✓</i>Arbre prêt à être exécuté</p>}</aside>
     <div className="canvas" onDragOver={(event) => event.preventDefault()} onDrop={onDrop}>
       <ReactFlow
         nodes={nodes} edges={edges} nodeTypes={nodeTypes} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange}
-        onEdgesDelete={(deleted) => commitDraft((current) => ({ ...current, edges: current.edges.filter((edge) => !deleted.some((item) => item.id === edge.id)) }))}
-        onConnect={onConnect} onNodeDragStop={(_, node) => commitDraft((current) => ({ ...current, nodes: current.nodes.map((item) => item.id === node.id ? { ...item, position: node.position } : item) }))} onNodeClick={(_, node) => { setSelected(node.id); setInspectorTab('node') }} onPaneClick={() => { setSelected(undefined); setInspectorTab('tree') }} fitView
+        onEdgesDelete={(deleted) => deleteEdges(deleted.map((edge) => edge.id))}
+        onConnect={onConnect} onNodeDragStop={(_, node) => commitDraft((current) => ({ ...current, nodes: current.nodes.map((item) => item.id === node.id ? { ...item, position: node.position } : item) }))} onNodeClick={(_, node) => { setSelectedEdgeId(undefined); setSelected(node.id); setInspectorTab('node') }} onEdgeClick={(_, edge) => { setSelected(undefined); setSelectedEdgeId(edge.id); setInspectorTab('tree') }} onPaneClick={() => { setSelected(undefined); setSelectedEdgeId(undefined); setInspectorTab('tree') }} fitView
       ><Background gap={22} size={1} color="var(--canvas-dot)" /><Controls showInteractive={false} /><MiniMap pannable zoomable nodeColor={(node) => kindColor[(node.data as unknown as FlowNodeData).node.kind]} /></ReactFlow>
     </div>
-    <div className="inspector-shell"><div className="inspector-resizer" role="separator" tabIndex={0} aria-orientation="vertical" aria-label="Redimensionner le panneau de droite" aria-valuemin={300} aria-valuemax={520} aria-valuenow={inspectorWidth} onPointerDown={(event) => { event.preventDefault(); setIsResizingInspector(true) }} onKeyDown={(event) => { if (event.key === 'ArrowLeft') setInspectorWidth((current) => Math.min(520, current + 20)); if (event.key === 'ArrowRight') setInspectorWidth((current) => Math.max(300, current - 20)) }} /><aside className="inspector"><div className="inspector-tabs"><button className={inspectorTab === 'tree' ? 'active' : ''} onClick={() => setInspectorTab('tree')}>Arbre</button><button className={inspectorTab === 'node' ? 'active' : ''} disabled={!selectedNode} onClick={() => setInspectorTab('node')}>Étape</button></div>{inspectorTab === 'node' && selectedNode ? <NodeInspector key={selectedNode.id} node={selectedNode} nodes={draft.nodes} edges={draft.edges} inputs={draft.inputs} availableTrees={trees.filter((candidate) => candidate.id !== draft.id)} update={updateNode} updateChoices={updateQuestionChoices} assignPath={assignQuestionPath} createResultBranches={createResultBranches} canCreateResultBranches={!draft.edges.some((edge) => edge.source === selectedNode.id)} onRemove={deleteSelectedNode} /> : <TreeInspector tree={draft} update={(patch) => commitDraft((current) => ({ ...current, ...patch }))} addInput={addInput} updateInput={(index, patch) => commitDraft((current) => ({ ...current, inputs: current.inputs.map((item, at) => at === index ? { ...item, ...patch } : item) }))} removeInput={(index) => commitDraft((current) => ({ ...current, inputs: current.inputs.filter((_, at) => at !== index) }))} />}</aside></div>
+    <div className="inspector-shell"><div className="inspector-resizer" role="separator" tabIndex={0} aria-orientation="vertical" aria-label="Redimensionner le panneau de droite" aria-valuemin={300} aria-valuemax={520} aria-valuenow={inspectorWidth} onPointerDown={(event) => { event.preventDefault(); setIsResizingInspector(true) }} onKeyDown={(event) => { if (event.key === 'ArrowLeft') setInspectorWidth((current) => Math.min(520, current + 20)); if (event.key === 'ArrowRight') setInspectorWidth((current) => Math.max(300, current - 20)) }} /><aside className="inspector"><div className="inspector-tabs"><button className={inspectorTab === 'tree' ? 'active' : ''} onClick={() => setInspectorTab('tree')}>Arbre</button><button className={inspectorTab === 'node' ? 'active' : ''} disabled={!selectedNode} onClick={() => setInspectorTab('node')}>Étape</button></div>{inspectorTab === 'node' && selectedNode ? <NodeInspector key={selectedNode.id} node={selectedNode} nodes={draft.nodes} edges={draft.edges} inputs={draft.inputs} availableTrees={trees.filter((candidate) => candidate.id !== draft.id)} update={updateNode} updateChoices={updateQuestionChoices} assignPath={assignQuestionPath} createResultBranches={createResultBranches} canCreateResultBranches={!draft.edges.some((edge) => edge.source === selectedNode.id)} onRemove={deleteSelectedNode} /> : <TreeInspector tree={draft} selectedEdgeId={selectedEdgeId} removeSelectedEdge={() => selectedEdgeId && deleteEdges([selectedEdgeId])} update={(patch) => commitDraft((current) => ({ ...current, ...patch }))} addInput={addInput} updateInput={(index, patch) => commitDraft((current) => ({ ...current, inputs: current.inputs.map((item, at) => at === index ? { ...item, ...patch } : item) }))} removeInput={(index) => commitDraft((current) => ({ ...current, inputs: current.inputs.filter((_, at) => at !== index) }))} />}</aside></div>
   </section>
 }
 
-function TreeInspector({ tree, update, addInput, updateInput, removeInput }: { tree: DecisionTree; update: (patch: Partial<Pick<DecisionTree, 'title' | 'description'>>) => void; addInput: () => void; updateInput: (index: number, patch: Partial<InputDefinition>) => void; removeInput: (index: number) => void }) {
-  return <><h3>Propriétés de l’arbre</h3><label>Titre de l’arbre<textarea className="tree-title-editor" rows={2} value={tree.title} onChange={(event) => update({ title: event.target.value })} /></label><label>Description<textarea value={tree.description} onChange={(event) => update({ description: event.target.value })} /></label><div className="input-head"><h3>Données initiales</h3><button onClick={addInput}>+ Ajouter</button></div>{tree.inputs.map((input, index) => <InputEditor key={input.id} input={input} update={(patch) => updateInput(index, patch)} remove={() => removeInput(index)} />)}</>
+function TreeInspector({ tree, selectedEdgeId, removeSelectedEdge, update, addInput, updateInput, removeInput }: { tree: DecisionTree; selectedEdgeId?: string; removeSelectedEdge: () => void; update: (patch: Partial<Pick<DecisionTree, 'title' | 'description'>>) => void; addInput: () => void; updateInput: (index: number, patch: Partial<InputDefinition>) => void; removeInput: (index: number) => void }) {
+  return <>{selectedEdgeId && <section className="edge-inspector"><strong>Connexion sélectionnée</strong><span>Supprimez ce lien ou utilisez la touche Suppr.</span><button className="danger" onClick={removeSelectedEdge}>Supprimer le lien</button></section>}<h3>Propriétés de l’arbre</h3><label>Titre de l’arbre<textarea className="tree-title-editor" rows={2} value={tree.title} onChange={(event) => update({ title: event.target.value })} /></label><label>Description<textarea value={tree.description} onChange={(event) => update({ description: event.target.value })} /></label><div className="input-head"><h3>Données initiales</h3><button onClick={addInput}>+ Ajouter</button></div>{tree.inputs.map((input, index) => <InputEditor key={input.id} input={input} update={(patch) => updateInput(index, patch)} remove={() => removeInput(index)} />)}</>
 }
 
 function InputEditor({ input, update, remove }: { input: InputDefinition; update: (patch: Partial<InputDefinition>) => void; remove: () => void }) {

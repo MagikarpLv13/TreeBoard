@@ -12,6 +12,7 @@ dist
 dist-ssr
 *.local
 graphify-out/
+data/
 .env
 .env.*
 !.env.example

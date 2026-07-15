@@ -15,9 +15,10 @@ export function safeExternalUrl(template: string, variables: Record<string, stri
   try { const url = new URL(value); return ['https:', 'http:'].includes(url.protocol) ? url.href : null } catch { return null }
 }
 export function nextNode(tree: DecisionTree, node: TreeNode, answer?: string): TreeNode | undefined {
+  const outgoing = tree.edges.filter((item) => item.source === node.id)
   const edge = node.kind === 'question'
-    ? tree.edges.find((item) => item.source === node.id && item.choiceValue === answer)
-    : tree.edges.find((item) => item.source === node.id)
+    ? outgoing.find((item) => item.choiceValue === answer)
+    : outgoing.length === 1 ? outgoing[0] : undefined
   return edge ? tree.nodes.find((candidate) => candidate.id === edge.target) : undefined
 }
 

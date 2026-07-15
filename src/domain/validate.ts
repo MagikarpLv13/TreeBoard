@@ -14,6 +14,9 @@ export function validateTree(tree: DecisionTree, availableTrees: DecisionTree[] 
   const seen = new Set<string>(); const walk = (id: string) => { if (seen.has(id)) return; seen.add(id); tree.edges.filter((edge) => edge.source === id).forEach((edge) => walk(edge.target)) }; if (entry) walk(entry.id)
   tree.nodes.filter((node) => !seen.has(node.id)).forEach((node) => issues.push({ level: 'warning', message: `Étape inaccessible : ${node.title || 'sans titre'}`, nodeId: node.id }))
   tree.nodes.filter((node) => node.kind !== 'end' && node.kind !== 'handoff' && !tree.edges.some((edge) => edge.source === node.id)).forEach((node) => issues.push({ level: 'warning', message: `Aucune suite après « ${node.title || 'cette étape'} ».`, nodeId: node.id }))
+  tree.nodes.filter((node) => node.kind !== 'question').forEach((node) => {
+    if (tree.edges.filter((edge) => edge.source === node.id).length > 1) issues.push({ level: 'error', message: `« ${node.title || 'Cette étape'} » mène à plusieurs étapes. Ajoutez une question pour créer des branches.`, nodeId: node.id })
+  })
   tree.nodes.filter((node) => node.kind === 'question').forEach((node) => {
     const choices = node.choices ?? []
     if (!choices.length) issues.push({ level: 'error', message: `Ajoutez au moins une réponse à « ${node.title || 'cette question'} ».`, nodeId: node.id })
