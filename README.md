@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="src/assets/hero.png" width="200" alt="Illustration TreeBoard" />
+  <img src="public/favicon.svg" width="120" alt="Logo TreeBoard" />
 </p>
 
 <h1 align="center">TreeBoard</h1>
