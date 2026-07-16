@@ -1,4 +1,4 @@
-import type { DecisionTree, ExecutionSession, StepExecution, TreeNode } from './model'
+import type { DecisionTree, ExecutionSession, SessionCheckpoint, StepExecution, TreeNode } from './model'
 
 export type TemplateResult = { value: string; unknown: string[] }
 export function renderTemplate(source: string, variables: Record<string, string>): TemplateResult {
@@ -35,7 +35,31 @@ export function initialNode(tree: DecisionTree): TreeNode | undefined {
 }
 export function createSession(tree: DecisionTree, variables: Record<string, string>): ExecutionSession {
   const firstNode = initialNode(tree); if (!firstNode) throw new Error('Arbre sans première étape.')
-  const at = new Date().toISOString(); return { id: crypto.randomUUID(), treeId: tree.id, treeTitle: tree.title, createdAt: at, updatedAt: at, currentNodeId: firstNode.id, variables, steps: [], variableUpdates: [] }
+  const at = new Date().toISOString()
+  return checkpointSession({ id: crypto.randomUUID(), treeId: tree.id, treeTitle: tree.title, createdAt: at, updatedAt: at, currentNodeId: firstNode.id, variables, steps: [], variableUpdates: [] })
+}
+export function sessionCheckpoint(session: ExecutionSession): SessionCheckpoint {
+  return { treeId: session.treeId, treeTitle: session.treeTitle, currentNodeId: session.currentNodeId, variables: { ...session.variables }, steps: [...session.steps], variableUpdates: session.variableUpdates ? [...session.variableUpdates] : undefined, ...(session.completedAt ? { completedAt: session.completedAt } : {}) }
+}
+export function checkpointSession(session: ExecutionSession): ExecutionSession {
+  return { ...session, timeline: [...(session.timeline ?? []), sessionCheckpoint(session)] }
+}
+export function replaceCurrentCheckpoint(session: ExecutionSession): ExecutionSession {
+  const timeline = session.timeline ?? []
+  return { ...session, timeline: timeline.length ? [...timeline.slice(0, -1), sessionCheckpoint(session)] : [sessionCheckpoint(session)] }
+}
+export function sessionAtCheckpoint(session: ExecutionSession, index: number): ExecutionSession {
+  const checkpoint = session.timeline?.[index]
+  return checkpoint ? { ...session, ...checkpoint, variables: { ...checkpoint.variables }, steps: [...checkpoint.steps], variableUpdates: checkpoint.variableUpdates ? [...checkpoint.variableUpdates] : undefined } : session
+}
+export function discardAfterCheckpoint(session: ExecutionSession, index: number): ExecutionSession {
+  const restored = sessionAtCheckpoint(session, index)
+  return { ...restored, completedAt: undefined, timeline: (session.timeline ?? []).slice(0, index + 1), updatedAt: new Date().toISOString() }
+}
+export function duplicateAtCheckpoint(session: ExecutionSession, index: number): ExecutionSession {
+  const restored = discardAfterCheckpoint(session, index)
+  const at = new Date().toISOString()
+  return { ...restored, id: crypto.randomUUID(), createdAt: at, updatedAt: at }
 }
 export function recordStep(session: ExecutionSession, tree: DecisionTree, nodeId: string, status: StepExecution['status'], answer?: string, note?: string): ExecutionSession {
   const at = new Date().toISOString(); return { ...session, updatedAt: at, steps: [...session.steps, { id: crypto.randomUUID(), nodeId, at, status, answer, note, treeId: tree.id, treeTitle: tree.title, nodeTitle: tree.nodes.find((node) => node.id === nodeId)?.title }] }
@@ -47,7 +71,7 @@ export function updateSessionVariables(session: ExecutionSession, tree: Decision
   const at = new Date().toISOString()
   const variables = { ...session.variables, ...cleaned }
   removedKeys.forEach((key) => delete variables[key])
-  return { ...session, updatedAt: at, variables, variableUpdates: [...(session.variableUpdates ?? []), { id: crypto.randomUUID(), at, nodeId, treeId: tree.id, changes: cleaned, ...(removedKeys.length ? { removed: removedKeys } : {}) }] }
+  return replaceCurrentCheckpoint({ ...session, updatedAt: at, variables, variableUpdates: [...(session.variableUpdates ?? []), { id: crypto.randomUUID(), at, nodeId, treeId: tree.id, changes: cleaned, ...(removedKeys.length ? { removed: removedKeys } : {}) }] })
 }
 export function moveToTree(session: ExecutionSession, targetTree: DecisionTree): ExecutionSession {
   const firstNode = initialNode(targetTree)

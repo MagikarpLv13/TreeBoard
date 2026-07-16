@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react'
 import { Background, Controls, Handle, MarkerType, MiniMap, Position, ReactFlow, useEdgesState, useNodesState, type Connection, type Edge, type Node, type NodeProps, type OnConnect } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { blankNode, blankTree, DecisionTreeSchema, osintEmailExample, type Choice, type DecisionTree, type ExecutionSession, type InputDefinition, type NodeKind, type StepStatus, type TreeNode } from './domain/model'
-import { createSession, markdownReport, moveToTree, nextNode, recordStep, renderTemplate, safeExternalUrl, updateSessionVariables } from './domain/engine'
+import { checkpointSession, createSession, discardAfterCheckpoint, duplicateAtCheckpoint, markdownReport, moveToTree, nextNode, recordStep, renderTemplate, replaceCurrentCheckpoint, safeExternalUrl, sessionAtCheckpoint, updateSessionVariables } from './domain/engine'
 import { pasteTreeNode, removeTreeNode } from './domain/editor'
 import { validateTree } from './domain/validate'
 import { useAppStore } from './store/appStore'
@@ -50,52 +50,489 @@ function TreePreview({ tree }: { tree: DecisionTree }) {
   </svg>
 }
 
-type FlowNodeData = { node: TreeNode }
+function ReadOnlyTreeMap({
+  tree,
+  session,
+  currentNodeId,
+  viewedCheckpointIndex,
+  onVisit,
+}: {
+  tree: DecisionTree;
+  session: ExecutionSession;
+  currentNodeId: string;
+  viewedCheckpointIndex: number;
+  onVisit: (checkpointIndex: number) => void;
+}) {
+  const nodes = tree.nodes;
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [zoom, setZoom] = useState(1);
+  const zoomRef = useRef(zoom);
+  zoomRef.current = zoom;
+  const drag = useRef<
+    | { pointerId: number; x: number; y: number; panX: number; panY: number }
+    | undefined
+  >(undefined);
+  const moved = useRef(false);
+  const viewport = useRef<HTMLDivElement>(null);
+  const xs = nodes.length ? nodes.map((node) => node.position.x) : [0];
+  const ys = nodes.length ? nodes.map((node) => node.position.y) : [0];
+  const minX = Math.min(...xs);
+  const maxX = Math.max(...xs);
+  const minY = Math.min(...ys);
+  const maxY = Math.max(...ys);
+  const scaleX = (value: number) =>
+    60 + ((value - minX) / Math.max(maxX - minX, 1)) * 880;
+  const scaleY = (value: number) =>
+    50 + ((value - minY) / Math.max(maxY - minY, 1)) * 560;
+  const positions = new Map(
+    nodes.map((node) => [
+      node.id,
+      { x: scaleX(node.position.x), y: scaleY(node.position.y) },
+    ]),
+  );
+  const activePoint = positions.get(currentNodeId);
+  const activeX = activePoint?.x;
+  const activeY = activePoint?.y;
+  const focusCurrentNode = useCallback(() => {
+    if (activeX === undefined || activeY === undefined || !viewport.current)
+      return;
+    const nextPan = {
+      x: Math.round(
+        viewport.current.clientWidth / 2 - activeX * zoomRef.current,
+      ),
+      y: Math.round(
+        viewport.current.clientHeight / 2 - activeY * zoomRef.current,
+      ),
+    };
+    setPan((previousPan) =>
+      previousPan.x === nextPan.x && previousPan.y === nextPan.y
+        ? previousPan
+        : nextPan,
+    );
+  }, [activeX, activeY]);
 
-function DecisionNode({ data, selected }: NodeProps) {
-  const node = (data as unknown as FlowNodeData).node
-  const isQuestion = node.kind === 'question' && node.choices?.length
-  return <div className={`decision-node ${selected ? 'selected' : ''}`}>
-    <Handle id="target-top" type="target" position={Position.Top} title="Entrée haute" />
-    <Handle id="target-left" type="target" position={Position.Left} title="Entrée latérale gauche" />
-    <div className="node-type" style={{ color: kindColor[node.kind] }}><i />{nodeLabel[node.kind]}</div>
-    <strong>{node.title || 'Sans titre'}</strong>
-    {node.body && <p>{node.body}</p>}
-    {node.kind === 'action' && node.links?.length ? <span className="node-chip">{node.links.length} lien{node.links.length > 1 ? 's' : ''}</span> : null}
-    {isQuestion ? <div className="node-choices">{node.choices?.slice(0, 3).map((choice) => <span key={choice.id}>{choice.label}<b>{choice.value}</b></span>)}</div> : null}
-    <Handle id="source-bottom" type="source" position={Position.Bottom} title="Sortie basse" />
-    <Handle id="source-right" type="source" position={Position.Right} title="Sortie latérale droite" />
-  </div>
+  useEffect(() => {
+    if (!viewport.current) return;
+    focusCurrentNode();
+    const observer = new ResizeObserver(focusCurrentNode);
+    observer.observe(viewport.current);
+    return () => observer.disconnect();
+  }, [focusCurrentNode, currentNodeId, tree.id]);
+  if (!nodes.length) return null;
+  const completed = new Set(
+    session.steps
+      .filter((step) => (step.treeId ?? tree.id) === tree.id)
+      .map((step) => step.nodeId),
+  );
+  const checkpointFor = (item: TreeNode) =>
+    session.timeline?.findIndex(
+      (checkpoint) =>
+        checkpoint.treeId === tree.id && checkpoint.currentNodeId === item.id,
+    ) ?? -1;
+  const stepsAtCursor =
+    session.timeline?.[viewedCheckpointIndex]?.steps ?? session.steps;
+  const takenEdgeIds = new Set<string>();
+  stepsAtCursor
+    .filter((step) => (step.treeId ?? tree.id) === tree.id)
+    .forEach((step) => {
+      const sourceNode = nodes.find((item) => item.id === step.nodeId);
+      const outgoing = tree.edges.filter((edge) => edge.source === step.nodeId);
+      const takenEdge =
+        sourceNode?.kind === "question"
+          ? outgoing.find((edge) => edge.choiceValue === step.answer)
+          : outgoing.length === 1
+            ? outgoing[0]
+            : undefined;
+      if (takenEdge) takenEdgeIds.add(takenEdge.id);
+    });
+  const beginPan = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (
+      event.target instanceof Element &&
+      event.target.closest(".tree-map-node")
+    )
+      return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    drag.current = {
+      pointerId: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      panX: pan.x,
+      panY: pan.y,
+    };
+    moved.current = false;
+  };
+  const movePan = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const current = drag.current;
+    if (!current || current.pointerId !== event.pointerId) return;
+    const x = current.panX + event.clientX - current.x;
+    const y = current.panY + event.clientY - current.y;
+    if (Math.abs(x - current.panX) > 3 || Math.abs(y - current.panY) > 3)
+      moved.current = true;
+    setPan({ x, y });
+  };
+  const endPan = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (drag.current?.pointerId === event.pointerId) drag.current = undefined;
+    moved.current = false;
+  };
+  const setZoomLevel = (
+    requestedZoom: number,
+    focalPoint?: { x: number; y: number },
+  ) => {
+    const nextZoom = Math.min(
+      1.8,
+      Math.max(0.6, Number(requestedZoom.toFixed(2))),
+    );
+    if (nextZoom === zoom) return;
+    const previousZoom = zoom;
+    zoomRef.current = nextZoom;
+    if (focalPoint && viewport.current) {
+      const viewportBounds = viewport.current.getBoundingClientRect();
+      setPan((previousPan) => {
+        const canvasX =
+          (focalPoint.x - viewportBounds.left - previousPan.x) / previousZoom;
+        const canvasY =
+          (focalPoint.y - viewportBounds.top - previousPan.y) / previousZoom;
+        return {
+          x: Math.round(
+            focalPoint.x - viewportBounds.left - canvasX * nextZoom,
+          ),
+          y: Math.round(focalPoint.y - viewportBounds.top - canvasY * nextZoom),
+        };
+      });
+    } else focusCurrentNode();
+    setZoom(nextZoom);
+  };
+  const adjustZoom = (delta: number) => setZoomLevel(zoom + delta);
+  const zoomWithWheel = (event: ReactWheelEvent<HTMLDivElement>) => {
+    if (!event.deltaY) return;
+    event.preventDefault();
+    setZoomLevel(zoom + (event.deltaY < 0 ? 0.1 : -0.1), {
+      x: event.clientX,
+      y: event.clientY,
+    });
+  };
+  return (
+    <aside className="tree-overview" aria-label="Vue du parcours">
+      <div className="tree-overview-head">
+        <p className="eyebrow">Vue du parcours</p>
+        <div className="tree-map-controls">
+          <button
+            aria-label="Dézoomer le graphe"
+            onClick={() => adjustZoom(-0.2)}
+            disabled={zoom <= 0.6}
+          >
+            −
+          </button>
+          <button aria-label="Recentrer le graphe" onClick={focusCurrentNode}>
+            Centrer
+          </button>
+          <button
+            aria-label="Zoomer le graphe"
+            onClick={() => adjustZoom(0.2)}
+            disabled={zoom >= 1.8}
+          >
+            +
+          </button>
+        </div>
+        <span>
+          Glissez la vue · molette pour zoomer · cliquez une étape réalisée
+        </span>
+      </div>
+      <div
+        ref={viewport}
+        className="tree-map-viewport"
+        onPointerDown={beginPan}
+        onPointerMove={movePan}
+        onPointerUp={endPan}
+        onPointerCancel={endPan}
+        onWheel={zoomWithWheel}
+      >
+        <div
+          className="tree-map-canvas"
+          style={{
+            transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+          }}
+        >
+          <svg
+            className="tree-map"
+            viewBox="0 0 1000 660"
+            role="img"
+            aria-label={`Arbre ${tree.title} : étape actuelle ${nodes.find((item) => item.id === currentNodeId)?.title ?? "inconnue"}`}
+          >
+            {tree.edges.map((edge) => {
+              const source = positions.get(edge.source);
+              const target = positions.get(edge.target);
+              if (!source || !target) return null;
+              const isTaken = takenEdgeIds.has(edge.id);
+              return (
+                <line
+                  key={edge.id}
+                  x1={source.x}
+                  y1={source.y}
+                  x2={target.x}
+                  y2={target.y}
+                  className={isTaken ? "tree-map-edge taken" : "tree-map-edge"}
+                />
+              );
+            })}
+            {nodes.map((item) => {
+              const point = positions.get(item.id)!;
+              const isCurrent = item.id === currentNodeId;
+              const isCompleted = completed.has(item.id);
+              const checkpointIndex = checkpointFor(item);
+              const isFuture = checkpointIndex > viewedCheckpointIndex;
+              const isCurrentInSession =
+                item.id === session.currentNodeId && session.treeId === tree.id;
+              const canVisit = checkpointIndex >= 0;
+              const nodeFill =
+                isCurrent || isCurrentInSession
+                  ? "var(--brand)"
+                  : isCompleted
+                    ? "#2f8f6a"
+                    : "#c6ccd6";
+              const visit = () => {
+                if (moved.current) {
+                  moved.current = false;
+                  return;
+                }
+                if (canVisit) onVisit(checkpointIndex);
+              };
+              return (
+                <g
+                  key={item.id}
+                  className={`${isCurrent ? "tree-map-node current" : isFuture ? "tree-map-node future" : isCompleted ? "tree-map-node completed" : "tree-map-node"} ${isCurrentInSession ? "in-progress" : ""} ${canVisit ? "visited" : ""}`}
+                  onClick={visit}
+                  onKeyDown={(event) => {
+                    if (
+                      canVisit &&
+                      (event.key === "Enter" || event.key === " ")
+                    ) {
+                      event.preventDefault();
+                      visit();
+                    }
+                  }}
+                  role={canVisit ? "button" : undefined}
+                  tabIndex={canVisit ? 0 : undefined}
+                >
+                  <title>
+                    {item.title || "Sans titre"} ·{" "}
+                    {isCurrent
+                      ? "en cours"
+                      : isCurrentInSession
+                        ? "en cours"
+                        : isCompleted
+                          ? "terminée, cliquer pour consulter"
+                          : "à explorer"}
+                  </title>
+                  {isCurrent && (
+                    <circle
+                      cx={point.x}
+                      cy={point.y}
+                      r="30"
+                      className="tree-map-ring"
+                    />
+                  )}
+                  {item.kind === "question" ? (
+                    <rect
+                      x={point.x - 15}
+                      y={point.y - 15}
+                      width="30"
+                      height="30"
+                      rx="4"
+                      fill={nodeFill}
+                    />
+                  ) : (
+                    <circle cx={point.x} cy={point.y} r="15" fill={nodeFill} />
+                  )}
+                </g>
+              );
+            })}
+          </svg>
+        </div>
+      </div>
+      <p className="tree-current">
+        <span />
+        {nodes.find((item) => item.id === currentNodeId)?.title ||
+          "Étape actuelle"}
+      </p>
+      <div className="tree-legend">
+        <span>
+          <i className="completed" />
+          Terminé
+        </span>
+        <span>
+          <i className="current" />
+          En cours
+        </span>
+        <span>
+          <i />À explorer
+        </span>
+      </div>
+    </aside>
+  );
 }
 
-const nodeTypes = { decision: DecisionNode }
+type FlowNodeData = { node: TreeNode };
+
+function DecisionNode({ data, selected }: NodeProps) {
+  const node = (data as unknown as FlowNodeData).node;
+  const isQuestion = node.kind === "question" && node.choices?.length;
+  return (
+    <div className={`decision-node ${selected ? "selected" : ""}`}>
+      <Handle
+        id="target-top"
+        type="target"
+        position={Position.Top}
+        title="Entrée haute"
+      />
+      <Handle
+        id="target-left"
+        type="target"
+        position={Position.Left}
+        title="Entrée latérale gauche"
+      />
+      <div className="node-type" style={{ color: kindColor[node.kind] }}>
+        <i />
+        {nodeLabel[node.kind]}
+      </div>
+      <strong>{node.title || "Sans titre"}</strong>
+      {node.body && <p>{node.body}</p>}
+      {node.kind === "action" && node.links?.length ? (
+        <span className="node-chip">
+          {node.links.length} lien{node.links.length > 1 ? "s" : ""}
+        </span>
+      ) : null}
+      {isQuestion ? (
+        <div className="node-choices">
+          {node.choices?.slice(0, 3).map((choice) => (
+            <span key={choice.id}>
+              {choice.label}
+              <b>{choice.value}</b>
+            </span>
+          ))}
+        </div>
+      ) : null}
+      <Handle
+        id="source-bottom"
+        type="source"
+        position={Position.Bottom}
+        title="Sortie basse"
+      />
+      <Handle
+        id="source-right"
+        type="source"
+        position={Position.Right}
+        title="Sortie latérale droite"
+      />
+    </div>
+  );
+}
+
+const nodeTypes = { decision: DecisionNode };
 
 export default function App() {
-  const { trees, sessions, activeTree, activeSession, screen, loaded, load, saveTree, removeTree, setActiveTree, setActiveSession, setScreen, saveSession, removeSession } = useAppStore()
-  const [theme, setTheme] = useState<'light' | 'dark'>(() => localStorage.getItem('treeboard-theme') === 'dark' ? 'dark' : 'light')
-  const toggleTheme = () => setTheme((current) => current === 'light' ? 'dark' : 'light')
+  const {
+    trees,
+    sessions,
+    activeTree,
+    activeSession,
+    screen,
+    loaded,
+    load,
+    saveTree,
+    removeTree,
+    setActiveTree,
+    setActiveSession,
+    setScreen,
+    saveSession,
+    removeSession,
+  } = useAppStore();
+  const [theme, setTheme] = useState<"light" | "dark">(() =>
+    localStorage.getItem("treeboard-theme") === "dark" ? "dark" : "light",
+  );
+  const toggleTheme = () =>
+    setTheme((current) => (current === "light" ? "dark" : "light"));
 
-  useEffect(() => { void load() }, [load])
-  useEffect(() => { localStorage.setItem('treeboard-theme', theme) }, [theme])
   useEffect(() => {
-    const page = screen === 'library'
-      ? 'Arbres de décision'
-      : screen === 'editor'
-        ? `Éditeur — ${activeTree?.title ?? 'Nouvel arbre'}`
-        : `Parcours — ${activeTree?.title ?? 'Arbre de décision'}`
-    document.title = `TreeBoard | ${page}`
-  }, [activeTree?.title, screen])
-  if (!loaded) return <main className="loading" data-theme={theme}><Logo /><span>Chargement de votre espace local…</span></main>
+    void load();
+  }, [load]);
+  useEffect(() => {
+    localStorage.setItem("treeboard-theme", theme);
+  }, [theme]);
+  useEffect(() => {
+    const page =
+      screen === "library"
+        ? "Arbres de décision"
+        : screen === "editor"
+          ? `Éditeur — ${activeTree?.title ?? "Nouvel arbre"}`
+          : `Parcours — ${activeTree?.title ?? "Arbre de décision"}`;
+    document.title = `TreeBoard | ${page}`;
+  }, [activeTree?.title, screen]);
+  if (!loaded)
+    return (
+      <main className="loading" data-theme={theme}>
+        <Logo />
+        <span>Chargement de votre espace local…</span>
+      </main>
+    );
 
-  const openTree = (tree: DecisionTree) => { setActiveTree(tree); setScreen('editor') }
-  const runTree = (tree: DecisionTree) => { setActiveTree(tree); setActiveSession(undefined); setScreen('run') }
-  const commonTheme = { theme, toggleTheme }
+  const openTree = (tree: DecisionTree) => {
+    setActiveTree(tree);
+    setScreen("editor");
+  };
+  const runTree = (tree: DecisionTree) => {
+    setActiveTree(tree);
+    setActiveSession(undefined);
+    setScreen("run");
+  };
+  const commonTheme = { theme, toggleTheme };
 
-  return <main className="app" data-theme={theme}>
-    {screen === 'library' && <Library trees={trees} sessions={sessions} openTree={openTree} runTree={runTree} onNew={() => openTree(blankTree())} onExample={() => openTree(osintEmailExample())} onDelete={(id) => void removeTree(id)} onSession={(session) => { const tree = trees.find((item) => item.id === session.treeId); if (tree) { setActiveTree(tree); setActiveSession(session); setScreen('run') } }} onDeleteSession={(id) => void removeSession(id)} {...commonTheme} />}
-    {screen === 'editor' && activeTree && <Editor key={activeTree.id} tree={activeTree} trees={trees} onBack={() => setScreen('library')} onSave={saveTree} onRun={runTree} {...commonTheme} />}
-    {screen === 'run' && activeTree && <Runner tree={activeTree} trees={trees} session={activeSession} onBack={() => setScreen('library')} onSave={saveSession} {...commonTheme} />}
-  </main>
+  return (
+    <main className="app" data-theme={theme}>
+      {screen === "library" && (
+        <Library
+          trees={trees}
+          sessions={sessions}
+          openTree={openTree}
+          runTree={runTree}
+          onNew={() => openTree(blankTree())}
+          onExample={() => openTree(osintEmailExample())}
+          onDelete={(id) => void removeTree(id)}
+          onSession={(session) => {
+            const tree = trees.find((item) => item.id === session.treeId);
+            if (tree) {
+              setActiveTree(tree);
+              setActiveSession(session);
+              setScreen("run");
+            }
+          }}
+          onDeleteSession={(id) => void removeSession(id)}
+          {...commonTheme}
+        />
+      )}
+      {screen === "editor" && activeTree && (
+        <Editor
+          key={activeTree.id}
+          tree={activeTree}
+          trees={trees}
+          onBack={() => setScreen("library")}
+          onSave={saveTree}
+          onRun={runTree}
+          {...commonTheme}
+        />
+      )}
+      {screen === "run" && activeTree && (
+        <Runner
+          tree={activeTree}
+          trees={trees}
+          session={activeSession}
+          onBack={() => setScreen("library")}
+          onSave={saveSession}
+          {...commonTheme}
+        />
+      )}
+    </main>
+  );
 }
 
 type LibraryProps = {
@@ -391,61 +828,705 @@ function NodeInspector({ node, nodes, edges, inputs, availableTrees, update, upd
   return <><div className="inspector-title"><div><i style={{ background: kindColor[node.kind] }} /><h3>{nodeLabel[node.kind]}</h3></div><button className="danger icon-button" onClick={onRemove} aria-label="Supprimer l’étape">×</button></div><label>Titre<input value={node.title} onChange={(event) => update({ title: event.target.value })} /></label><label>Instructions<textarea ref={instructions} value={node.body} onChange={(event) => update({ body: event.target.value })} /></label>{node.kind === 'handoff' && <section className="handoff-editor"><strong>Arbre à ouvrir</strong><span>Les données de la session (pseudo, URL, identifiants…) sont transmises à l’arbre choisi.</span><select value={node.targetTreeId ?? ''} onChange={(event) => update({ targetTreeId: event.target.value || undefined })}><option value="">— Choisir un arbre —</option>{availableTrees.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.title}</option>)}</select>{!availableTrees.length && <small>Créez et enregistrez d’abord un autre arbre.</small>}</section>}{node.kind === 'action' && <ActionTemplateBuilder inputs={inputs} insertInstruction={(template) => insertTemplateAtCursor(instructions.current, node.body, template, (body) => update({ body }))} insertLink={(template) => insertTemplateAtCursor(links.current, linkText, template, updateLinks)} />}{node.kind === 'action' && <section className="result-path-starter"><div><strong>Créer la suite selon le résultat</strong><span>Ajoute une décision et trois actions déjà reliées, prêtes à être renommées.</span></div><button className="primary" disabled={!canCreateResultBranches} onClick={createResultBranches}>+ Ajouter les branches de résultat</button>{!canCreateResultBranches && <small>Cette action est déjà reliée à une étape.</small>}</section>}{node.kind === 'question' && <QuestionPathsEditor node={node} nodes={nodes} edges={edges} updateChoices={updateChoices} assignPath={assignPath} />}{node.kind === 'action' && <label>Liens <span className="field-hint">libellé|URL modèle</span><textarea ref={links} className="mono" placeholder="Recherche|https://…?q={{email|urlencode}}" value={linkText} onChange={(event) => updateLinks(event.target.value)} /></label>}</>
 }
 
-function QuestionPathsEditor({ node, nodes, edges, updateChoices, assignPath }: { node: TreeNode; nodes: TreeNode[]; edges: DecisionTree['edges']; updateChoices: (choices: Choice[]) => void; assignPath: (choice: Choice, targetId: string) => void }) {
-  const choices = node.choices ?? []
-  const updateChoice = (id: string, patch: Partial<Choice>) => updateChoices(choices.map((choice) => choice.id === id ? { ...choice, ...patch } : choice))
-  return <section className="question-paths"><div className="question-help"><strong>Décider des chemins</strong><p>Le libellé est affiché pendant le parcours. Choisissez ensuite l’étape à ouvrir pour chaque réponse.</p></div>{choices.map((choice, index) => {
-    const targetId = edges.find((edge) => edge.source === node.id && edge.choiceValue === choice.value)?.target ?? ''
-    return <div className="path-editor" key={choice.id}><div className="path-editor-head"><span>Chemin {index + 1}</span><button className="danger" disabled={choices.length === 1} onClick={() => updateChoices(choices.filter((item) => item.id !== choice.id))}>Supprimer</button></div><label>Réponse affichée<input value={choice.label} onChange={(event) => updateChoice(choice.id, { label: event.target.value })} /></label><label>Identifiant du chemin <span className="field-hint">unique, par exemple oui ou non</span><input className="mono" value={choice.value} onChange={(event) => updateChoice(choice.id, { value: event.target.value.trim().replace(/\s+/g, '-') })} /></label><label>Étape suivante<select value={targetId} onChange={(event) => assignPath(choice, event.target.value)}><option value="">— À relier —</option>{nodes.filter((item) => item.id !== node.id).map((item) => <option key={item.id} value={item.id}>{item.title || 'Sans titre'} · {nodeLabel[item.kind]}</option>)}</select></label></div>
-  })}<button className="add-path" onClick={() => updateChoices([...choices, { id: crypto.randomUUID(), label: 'Nouvelle réponse', value: `choix-${choices.length + 1}` }])}>+ Ajouter un chemin</button></section>
+function QuestionPathsEditor({
+  node,
+  nodes,
+  edges,
+  updateChoices,
+  assignPath,
+}: {
+  node: TreeNode;
+  nodes: TreeNode[];
+  edges: DecisionTree["edges"];
+  updateChoices: (choices: Choice[]) => void;
+  assignPath: (choice: Choice, targetId: string) => void;
+}) {
+  const choices = node.choices ?? [];
+  const updateChoice = (id: string, patch: Partial<Choice>) =>
+    updateChoices(
+      choices.map((choice) =>
+        choice.id === id ? { ...choice, ...patch } : choice,
+      ),
+    );
+  return (
+    <section className="question-paths">
+      <div className="question-help">
+        <strong>Décider des chemins</strong>
+        <p>
+          Le libellé est affiché pendant le parcours. Choisissez ensuite l’étape
+          à ouvrir pour chaque réponse.
+        </p>
+      </div>
+      {choices.map((choice, index) => {
+        const targetId =
+          edges.find(
+            (edge) =>
+              edge.source === node.id && edge.choiceValue === choice.value,
+          )?.target ?? "";
+        return (
+          <div className="path-editor" key={choice.id}>
+            <div className="path-editor-head">
+              <span>Chemin {index + 1}</span>
+              <button
+                className="danger"
+                disabled={choices.length === 1}
+                onClick={() =>
+                  updateChoices(choices.filter((item) => item.id !== choice.id))
+                }
+              >
+                Supprimer
+              </button>
+            </div>
+            <label>
+              Réponse affichée
+              <input
+                value={choice.label}
+                onChange={(event) =>
+                  updateChoice(choice.id, { label: event.target.value })
+                }
+              />
+            </label>
+            <label>
+              Identifiant du chemin{" "}
+              <span className="field-hint">unique, par exemple oui ou non</span>
+              <input
+                className="mono"
+                value={choice.value}
+                onChange={(event) =>
+                  updateChoice(choice.id, {
+                    value: event.target.value.trim().replace(/\s+/g, "-"),
+                  })
+                }
+              />
+            </label>
+            <label>
+              Étape suivante
+              <select
+                value={targetId}
+                onChange={(event) => assignPath(choice, event.target.value)}
+              >
+                <option value="">— À relier —</option>
+                {nodes
+                  .filter((item) => item.id !== node.id)
+                  .map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.title || "Sans titre"} · {nodeLabel[item.kind]}
+                    </option>
+                  ))}
+              </select>
+            </label>
+          </div>
+        );
+      })}
+      <button
+        className="add-path"
+        onClick={() =>
+          updateChoices([
+            ...choices,
+            {
+              id: crypto.randomUUID(),
+              label: "Nouvelle réponse",
+              value: `choix-${choices.length + 1}`,
+            },
+          ])
+        }
+      >
+        + Ajouter un chemin
+      </button>
+    </section>
+  );
 }
 
-function SessionDataEditor({ session, onSave }: { session: ExecutionSession; onSave: (changes: Record<string, string>, removed: string[]) => Promise<void> }) {
-  const [entries, setEntries] = useState(() => Object.entries(session.variables).map(([key, value]) => ({ key, value })))
-  const [removed, setRemoved] = useState<string[]>([])
+function SessionDataEditor({
+  session,
+  contextKeys,
+  onSave,
+}: {
+  session: ExecutionSession;
+  contextKeys: string[];
+  onSave: (changes: Record<string, string>, removed: string[]) => Promise<void>;
+}) {
+  const [entries, setEntries] = useState(() =>
+    Object.entries(session.variables)
+      .filter(([key]) => !contextKeys.includes(key))
+      .map(([key, value]) => ({ key, value })),
+  );
+  const [removed, setRemoved] = useState<string[]>([]);
   const saveChanges = async () => {
-    const changes = Object.fromEntries(entries.filter((entry) => entry.key.trim()).map((entry) => [entry.key.trim().replace(/[^\w-]/g, '_'), entry.value]))
-    const modified = Object.fromEntries(Object.entries(changes).filter(([key, value]) => session.variables[key] !== value))
-    if (!Object.keys(modified).length && !removed.length) return
-    await onSave(modified, removed)
-  }
-  return <section className="session-data-editor"><div><strong>Données trouvées</strong><span>Ajoutez ou corrigez un pseudo, une URL, un identifiant… Les valeurs seront disponibles dans les étapes et arbres suivants via <code>{'{{identifiant}}'}</code>.</span></div>{entries.map((entry, index) => <div className="session-data-row" key={`${entry.key}-${index}`}><input aria-label="Identifiant de donnée" className="mono" placeholder="twitter_url" value={entry.key} onChange={(event) => setEntries((current) => current.map((item, at) => at === index ? { ...item, key: event.target.value } : item))} /><input aria-label="Valeur de donnée" placeholder="Valeur trouvée" value={entry.value} onChange={(event) => setEntries((current) => current.map((item, at) => at === index ? { ...item, value: event.target.value } : item))} /><button className="danger" onClick={() => { if (entry.key in session.variables) setRemoved((current) => [...new Set([...current, entry.key])]); setEntries((current) => current.filter((_, at) => at !== index)) }}>Supprimer</button></div>)}<div className="session-data-actions"><button onClick={() => setEntries((current) => [...current, { key: '', value: '' }])}>+ Nouvelle donnée</button><button className="primary" onClick={() => void saveChanges()}>Enregistrer les données</button></div></section>
+    const changes = Object.fromEntries(
+      entries
+        .filter((entry) => entry.key.trim())
+        .map((entry) => [
+          entry.key.trim().replace(/[^\w-]/g, "_"),
+          entry.value,
+        ]),
+    );
+    const modified = Object.fromEntries(
+      Object.entries(changes).filter(
+        ([key, value]) => session.variables[key] !== value,
+      ),
+    );
+    if (!Object.keys(modified).length && !removed.length) return;
+    await onSave(modified, removed);
+  };
+  return (
+    <section className="session-data-editor">
+      <div>
+        <strong>Données trouvées</strong>
+        <span>
+          Ajoutez ou corrigez un pseudo, une URL, un identifiant… Les valeurs
+          seront disponibles dans les étapes et arbres suivants via{" "}
+          <code>{"{{identifiant}}"}</code>.
+        </span>
+      </div>
+      {entries.map((entry, index) => (
+        <div className="session-data-row" key={`${entry.key}-${index}`}>
+          <input
+            aria-label="Identifiant de donnée"
+            className="mono"
+            placeholder="twitter_url"
+            value={entry.key}
+            onChange={(event) =>
+              setEntries((current) =>
+                current.map((item, at) =>
+                  at === index ? { ...item, key: event.target.value } : item,
+                ),
+              )
+            }
+          />
+          <input
+            aria-label="Valeur de donnée"
+            placeholder="Valeur trouvée"
+            value={entry.value}
+            onChange={(event) =>
+              setEntries((current) =>
+                current.map((item, at) =>
+                  at === index ? { ...item, value: event.target.value } : item,
+                ),
+              )
+            }
+          />
+          <button
+            className="danger"
+            onClick={() => {
+              if (entry.key in session.variables)
+                setRemoved((current) => [...new Set([...current, entry.key])]);
+              setEntries((current) => current.filter((_, at) => at !== index));
+            }}
+          >
+            Supprimer
+          </button>
+        </div>
+      ))}
+      <div className="session-data-actions">
+        <button
+          onClick={() =>
+            setEntries((current) => [...current, { key: "", value: "" }])
+          }
+        >
+          + Nouvelle donnée
+        </button>
+        <button className="primary" onClick={() => void saveChanges()}>
+          Enregistrer les données
+        </button>
+      </div>
+    </section>
+  );
 }
 
-function Runner({ tree, trees, session: suppliedSession, onBack, onSave, theme, toggleTheme }: { tree: DecisionTree; trees: DecisionTree[]; session?: ExecutionSession; onBack: () => void; onSave: (session: ExecutionSession) => Promise<void>; theme: 'light' | 'dark'; toggleTheme: () => void }) {
-  const [session, setSession] = useState(suppliedSession)
-  const [values, setValues] = useState<Record<string, string>>(suppliedSession?.variables ?? Object.fromEntries(tree.inputs.map((input) => [input.id, input.defaultValue ?? ''])))
-  const [note, setNote] = useState('')
-  const currentTree = session ? trees.find((candidate) => candidate.id === session.treeId) ?? tree : tree
-  const node = session ? currentTree.nodes.find((item) => item.id === session.currentNodeId) : undefined
-  const save = async (next: ExecutionSession) => { setSession(next); await onSave(next) }
+function Runner({
+  tree,
+  trees,
+  session: suppliedSession,
+  onBack,
+  onSave,
+  theme,
+  toggleTheme,
+}: {
+  tree: DecisionTree;
+  trees: DecisionTree[];
+  session?: ExecutionSession;
+  onBack: () => void;
+  onSave: (session: ExecutionSession) => Promise<void>;
+  theme: "light" | "dark";
+  toggleTheme: () => void;
+}) {
+  const [session, setSession] = useState(suppliedSession);
+  const [values, setValues] = useState<Record<string, string>>(
+    suppliedSession?.variables ??
+      Object.fromEntries(
+        tree.inputs.map((input) => [input.id, input.defaultValue ?? ""]),
+      ),
+  );
+  const [note, setNote] = useState("");
+  const [cursor, setCursor] = useState(() =>
+    Math.max((suppliedSession?.timeline?.length ?? 1) - 1, 0),
+  );
+  const [pendingChange, setPendingChange] = useState<
+    ((base: ExecutionSession) => ExecutionSession) | undefined
+  >();
+  const timeline = session?.timeline ?? [];
+  const checkpointIndex = Math.min(cursor, Math.max(timeline.length - 1, 0));
+  const viewedSession = session
+    ? sessionAtCheckpoint(session, checkpointIndex)
+    : undefined;
+  const isReviewing = Boolean(
+    session && timeline.length && checkpointIndex < timeline.length - 1,
+  );
+  const currentTree = viewedSession
+    ? (trees.find((candidate) => candidate.id === viewedSession.treeId) ?? tree)
+    : tree;
+  const node = viewedSession
+    ? currentTree.nodes.find((item) => item.id === viewedSession.currentNodeId)
+    : undefined;
+  const persist = async (next: ExecutionSession) => {
+    setSession(next);
+    setCursor(Math.max((next.timeline?.length ?? 1) - 1, 0));
+    await onSave(next);
+  };
+  const requestChange = (
+    change: (base: ExecutionSession) => ExecutionSession,
+  ) => {
+    if (!viewedSession) return;
+    if (isReviewing) {
+      setPendingChange(() => change);
+      return;
+    }
+    void persist(change(viewedSession));
+  };
   const startSession = () => {
-    if (tree.inputs.some((input) => input.required && !values[input.id])) return alert('Complétez les champs obligatoires.')
-    try { void save(createSession(tree, values)) } catch { alert('Ajoutez une première étape à ce parcours avant de le lancer.') }
-  }
-  if (!session) return <section className="runner start-run"><header className="run-head"><button className="back-button" onClick={onBack} aria-label="Quitter">←</button><Logo /><span className="run-head-spacer" /><ThemeToggle theme={theme} onChange={toggleTheme} /></header><div className="run-card"><p className="eyebrow">Parcours guidé</p><h1>{tree.title}</h1><p>{tree.description || 'Suivez ce parcours étape par étape et consignez vos observations.'}</p>{tree.inputs.length ? <><h2>Informations initiales</h2>{tree.inputs.map((input) => <label key={input.id}>{input.label}{input.required && ' *'}{input.type === 'textarea' ? <textarea value={values[input.id] ?? ''} onChange={(event) => setValues({ ...values, [input.id]: event.target.value })} /> : <input type={input.type === 'checkbox' ? 'checkbox' : input.type} required={input.required} value={input.type === 'checkbox' ? undefined : values[input.id] ?? ''} checked={input.type === 'checkbox' ? values[input.id] === 'true' : undefined} onChange={(event) => setValues({ ...values, [input.id]: input.type === 'checkbox' ? String(event.target.checked) : event.target.value })} />}{input.description && <small>{input.description}</small>}</label>)}</> : null}<button className="primary launch-button" onClick={startSession}>Lancer l’analyse →</button></div></section>
-  if (!node) return <section className="runner missing-step"><button onClick={onBack}>← Bibliothèque</button><p>Cette étape n’existe plus dans l’arbre.</p></section>
-  const runnableNodes = currentTree.nodes.filter((item) => item.kind !== 'start')
-  const progress = Math.min(100, Math.round((session.steps.length / Math.max(runnableNodes.length, 1)) * 100))
-  const complete = async (status: StepStatus, answer?: string) => {
-    let next = recordStep(session, currentTree, node.id, status, answer, note)
-    const destination = nextNode(currentTree, node, answer)
-    if (node.kind === 'end' || !destination) next = { ...next, completedAt: new Date().toISOString() }
-    else next = { ...next, currentNodeId: destination.id }
-    setNote('')
-    await save(next)
-  }
-  const transfer = async () => {
-    const target = trees.find((candidate) => candidate.id === node.targetTreeId)
-    if (!target) return alert('Choisissez un arbre cible existant dans l’éditeur.')
-    const missing = target.inputs.filter((input) => input.required && !session.variables[input.id])
-    if (missing.length) return alert(`Renseignez ces données avant de continuer : ${missing.map((input) => input.label).join(', ')}.`)
+    if (tree.inputs.some((input) => input.required && !values[input.id]))
+      return alert("Complétez les champs obligatoires.");
     try {
-      let next = recordStep(session, currentTree, node.id, 'completed', undefined, note)
-      next = moveToTree(next, target)
-      setNote('')
-      await save(next)
-    } catch { alert('L’arbre cible ne contient pas de première étape exécutable.') }
-  }
-  return <section className="runner"><header className="run-head"><button className="back-button" onClick={onBack} aria-label="Quitter">←</button><div className="run-title"><strong>{currentTree.title}</strong><div className="progress"><span style={{ width: `${progress}%` }} /></div></div><span className="progress-number">{progress}%</span><span className="session-saved">● Session enregistrée</span><ThemeToggle theme={theme} onChange={toggleTheme} /></header><div className="runner-grid"><aside className="context"><h3>Contexte</h3>{Object.entries(session.variables).length ? Object.entries(session.variables).map(([key, value]) => <p key={key}><small>{key}</small><span>{value || '—'}</span></p>) : <p className="context-empty">Aucune donnée initiale</p>}<h3>Historique</h3>{session.steps.length ? session.steps.map((step) => <p key={step.id} className="history"><i /><b>{step.nodeTitle ?? step.treeTitle ?? currentTree.title}</b><small>{statusLabel[step.status]}</small></p>) : <p className="context-empty">La première étape est prête.</p>}</aside><article className="step-card"><p className="eyebrow" style={{ color: kindColor[node.kind] }}>{nodeLabel[node.kind]} · étape {session.steps.length + 1}</p><h1>{renderTemplate(node.title, session.variables).value}</h1><p className="instructions">{renderTemplate(node.body, session.variables).value || 'Aucune instruction complémentaire.'}</p>{node.links?.length ? <div className="links">{node.links.map((link) => { const url = safeExternalUrl(link.urlTemplate, session.variables); return <button key={link.id} disabled={!url} onClick={() => url && confirm('Ouvrir ce lien externe dans un nouvel onglet ?') && open(url, '_blank', 'noopener,noreferrer')}>↗ <span>{link.label}</span><small>{url ? new URL(url).hostname : 'Lien invalide'}</small></button> })}</div> : null}{node.kind !== 'end' && <SessionDataEditor key={`${node.id}-${session.updatedAt}`} session={session} onSave={async (changes, removed) => save(updateSessionVariables(session, currentTree, node.id, changes, removed))} />}{node.kind === 'question' ? <div className="choices">{node.choices?.map((choice) => <button key={choice.id} onClick={() => void complete('completed', choice.value)}><span>{choice.label}</span><small>{choice.value}</small><b>→</b></button>)}</div> : node.kind === 'handoff' ? <><label className="note">Note de transition<textarea value={note} placeholder="Pourquoi cette suite est lancée, éléments utiles…" onChange={(event) => setNote(event.target.value)} /></label><button className="primary launch-button" onClick={() => void transfer()}>Continuer dans l’autre arbre →</button></> : node.kind === 'end' ? <div className="final-actions"><p className="final">Cette branche est terminée.</p><button className="complete-button" onClick={() => void complete('completed')}>Terminer et enregistrer</button><button onClick={() => download(`${currentTree.title}-rapport.md`, markdownReport(currentTree, session))}>Exporter le compte rendu</button></div> : <><label className="note">Note de cette étape<textarea value={note} placeholder="Observations, résultats, éléments à retenir…" onChange={(event) => setNote(event.target.value)} /></label><div className="status-actions">{(Object.keys(statusLabel) as StepStatus[]).map((status) => <button key={status} className={status === 'completed' ? 'complete-button' : status === 'blocked' ? 'danger' : ''} onClick={() => void complete(status)}>{statusLabel[status]}</button>)}</div></>}</article></div></section>
+      void persist(createSession(tree, values));
+    } catch {
+      alert("Ajoutez une première étape à ce parcours avant de le lancer.");
+    }
+  };
+  if (!session)
+    return (
+      <section className="runner start-run">
+        <header className="run-head">
+          <button className="back-button" onClick={onBack} aria-label="Quitter">
+            ←
+          </button>
+          <Logo />
+          <span className="run-head-spacer" />
+          <ThemeToggle theme={theme} onChange={toggleTheme} />
+        </header>
+        <div className="run-card">
+          <p className="eyebrow">Parcours guidé</p>
+          <h1>{tree.title}</h1>
+          <p>
+            {tree.description ||
+              "Suivez ce parcours étape par étape et consignez vos observations."}
+          </p>
+          {tree.inputs.length ? (
+            <>
+              <h2>Informations initiales</h2>
+              {tree.inputs.map((input) => (
+                <label key={input.id}>
+                  {input.label}
+                  {input.required && " *"}
+                  {input.type === "textarea" ? (
+                    <textarea
+                      value={values[input.id] ?? ""}
+                      onChange={(event) =>
+                        setValues({ ...values, [input.id]: event.target.value })
+                      }
+                    />
+                  ) : (
+                    <input
+                      type={input.type === "checkbox" ? "checkbox" : input.type}
+                      required={input.required}
+                      value={
+                        input.type === "checkbox"
+                          ? undefined
+                          : (values[input.id] ?? "")
+                      }
+                      checked={
+                        input.type === "checkbox"
+                          ? values[input.id] === "true"
+                          : undefined
+                      }
+                      onChange={(event) =>
+                        setValues({
+                          ...values,
+                          [input.id]:
+                            input.type === "checkbox"
+                              ? String(event.target.checked)
+                              : event.target.value,
+                        })
+                      }
+                    />
+                  )}
+                  {input.description && <small>{input.description}</small>}
+                </label>
+              ))}
+            </>
+          ) : null}
+          <button className="primary launch-button" onClick={startSession}>
+            Lancer l’analyse →
+          </button>
+        </div>
+      </section>
+    );
+  if (!viewedSession)
+    return (
+      <section className="runner missing-step">
+        <button onClick={onBack}>← Bibliothèque</button>
+        <p>Cette session ne peut pas être restaurée.</p>
+      </section>
+    );
+  if (!node)
+    return (
+      <section className="runner missing-step">
+        <button onClick={onBack}>← Bibliothèque</button>
+        <p>Cette étape n’existe plus dans l’arbre.</p>
+      </section>
+    );
+  const runnableNodes = currentTree.nodes.filter(
+    (item) => item.kind !== "start",
+  );
+  const progress = Math.min(
+    100,
+    Math.round(
+      (viewedSession.steps.length / Math.max(runnableNodes.length, 1)) * 100,
+    ),
+  );
+  const contextKeys = currentTree.inputs.map((input) => input.id);
+  const contextEntries = Object.entries(viewedSession.variables).filter(
+    ([key]) => contextKeys.includes(key),
+  );
+  const historySteps = session?.steps ?? viewedSession.steps;
+  const checkpointIndexForStep = (
+    step: ExecutionSession["steps"][number],
+    stepIndex: number,
+  ) =>
+    timeline.findIndex(
+      (checkpoint) =>
+        checkpoint.steps.length === stepIndex &&
+        checkpoint.currentNodeId === step.nodeId &&
+        checkpoint.treeId ===
+          (step.treeId ?? session?.treeId ?? currentTree.id),
+    );
+  const currentNodeListed = historySteps.some(
+    (step, stepIndex) =>
+      step.nodeId === node.id &&
+      checkpointIndexForStep(step, stepIndex) === checkpointIndex,
+  );
+  const complete = (status: StepStatus, answer?: string) => {
+    requestChange((base) => {
+      let next = recordStep(base, currentTree, node.id, status, answer, note);
+      const destination = nextNode(currentTree, node, answer);
+      if (node.kind === "end" || !destination)
+        next = { ...next, completedAt: new Date().toISOString() };
+      else
+        next = {
+          ...next,
+          currentNodeId: destination.id,
+          completedAt: undefined,
+        };
+      return node.kind === "end" || !destination
+        ? replaceCurrentCheckpoint(next)
+        : checkpointSession(next);
+    });
+    setNote("");
+  };
+  const transfer = () => {
+    const target = trees.find(
+      (candidate) => candidate.id === node.targetTreeId,
+    );
+    if (!target)
+      return alert("Choisissez un arbre cible existant dans l’éditeur.");
+    const missing = target.inputs.filter(
+      (input) => input.required && !viewedSession.variables[input.id],
+    );
+    if (missing.length)
+      return alert(
+        `Renseignez ces données avant de continuer : ${missing.map((input) => input.label).join(", ")}.`,
+      );
+    try {
+      requestChange((base) =>
+        checkpointSession(
+          moveToTree(
+            recordStep(
+              base,
+              currentTree,
+              node.id,
+              "completed",
+              undefined,
+              note,
+            ),
+            target,
+          ),
+        ),
+      );
+      setNote("");
+    } catch {
+      alert("L’arbre cible ne contient pas de première étape exécutable.");
+    }
+  };
+  const resolvePendingChange = (mode: "duplicate" | "discard") => {
+    if (!pendingChange || !session) return;
+    const base =
+      mode === "duplicate"
+        ? duplicateAtCheckpoint(session, checkpointIndex)
+        : discardAfterCheckpoint(session, checkpointIndex);
+    setPendingChange(undefined);
+    void persist(pendingChange(base));
+  };
+  return (
+    <section className="runner">
+      <header className="run-head">
+        <button className="back-button" onClick={onBack} aria-label="Quitter">
+          ←
+        </button>
+        <div className="run-title">
+          <strong>{currentTree.title}</strong>
+          <div className="progress">
+            <span style={{ width: `${progress}%` }} />
+          </div>
+        </div>
+        <span className="progress-number">{progress}%</span>
+        {timeline.length > 1 && (
+          <button
+            className="previous-step"
+            disabled={checkpointIndex === 0}
+            onClick={() => setCursor((index) => Math.max(0, index - 1))}
+          >
+            ← Étape précédente
+          </button>
+        )}
+        <span className="session-saved">
+          {isReviewing
+            ? "◷ Consultation de l’historique"
+            : "● Session enregistrée"}
+        </span>
+        <ThemeToggle theme={theme} onChange={toggleTheme} />
+      </header>
+      <div className="runner-grid">
+        <aside className="context">
+          <h3>Contexte</h3>
+          {contextEntries.length ? (
+            contextEntries.map(([key, value]) => (
+              <p key={key}>
+                <small>{key}</small>
+                <span>{value || "—"}</span>
+              </p>
+            ))
+          ) : (
+            <p className="context-empty">Aucune donnée initiale</p>
+          )}
+          <h3>Historique</h3>
+          {historySteps.map((step, stepIndex) => {
+            const targetCheckpoint = checkpointIndexForStep(step, stepIndex);
+            const isCurrentHistory =
+              targetCheckpoint === checkpointIndex && step.nodeId === node.id;
+            const isFutureHistory = targetCheckpoint > checkpointIndex;
+            return (
+              <button
+                key={step.id}
+                className={`history${isCurrentHistory ? " history-current" : isFutureHistory ? " history-future" : ""}`}
+                disabled={targetCheckpoint < 0}
+                aria-current={isCurrentHistory ? "step" : undefined}
+                onClick={() =>
+                  targetCheckpoint >= 0 && setCursor(targetCheckpoint)
+                }
+              >
+                <i />
+                <b>{step.nodeTitle ?? step.treeTitle ?? currentTree.title}</b>
+                <small>
+                  {isCurrentHistory ? "En cours" : statusLabel[step.status]}
+                </small>
+              </button>
+            );
+          })}
+          {!currentNodeListed && (
+            <div className="history history-current" aria-current="step">
+              <i />
+              <b>{node.title || "Étape actuelle"}</b>
+              <small>En cours</small>
+            </div>
+          )}
+        </aside>
+        <article className="step-card">
+          <p className="eyebrow" style={{ color: kindColor[node.kind] }}>
+            {nodeLabel[node.kind]} · étape {viewedSession.steps.length + 1}
+          </p>
+          <h1>{renderTemplate(node.title, viewedSession.variables).value}</h1>
+          <p className="instructions">
+            {renderTemplate(node.body, viewedSession.variables).value ||
+              "Aucune instruction complémentaire."}
+          </p>
+          {node.links?.length ? (
+            <div className="links">
+              {node.links.map((link) => {
+                const url = safeExternalUrl(
+                  link.urlTemplate,
+                  viewedSession.variables,
+                );
+                return (
+                  <button
+                    key={link.id}
+                    disabled={!url}
+                    onClick={() =>
+                      url &&
+                      confirm(
+                        "Ouvrir ce lien externe dans un nouvel onglet ?",
+                      ) &&
+                      open(url, "_blank", "noopener,noreferrer")
+                    }
+                  >
+                    ↗ <span>{link.label}</span>
+                    <small>
+                      {url ? new URL(url).hostname : "Lien invalide"}
+                    </small>
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
+          {node.kind !== "end" && (
+            <SessionDataEditor
+              key={`${node.id}-${viewedSession.updatedAt}`}
+              session={viewedSession}
+              contextKeys={contextKeys}
+              onSave={async (changes, removed) =>
+                requestChange((base) =>
+                  updateSessionVariables(
+                    base,
+                    currentTree,
+                    node.id,
+                    changes,
+                    removed,
+                  ),
+                )
+              }
+            />
+          )}
+          {node.kind === "question" ? (
+            <div className="choices">
+              {node.choices?.map((choice) => (
+                <button
+                  key={choice.id}
+                  onClick={() => complete("completed", choice.value)}
+                >
+                  <span>{choice.label}</span>
+                  <small>{choice.value}</small>
+                  <b>→</b>
+                </button>
+              ))}
+            </div>
+          ) : node.kind === "handoff" ? (
+            <>
+              <label className="note">
+                Note de transition
+                <textarea
+                  value={note}
+                  placeholder="Pourquoi cette suite est lancée, éléments utiles…"
+                  onChange={(event) => setNote(event.target.value)}
+                />
+              </label>
+              <button className="primary launch-button" onClick={transfer}>
+                Continuer dans l’autre arbre →
+              </button>
+            </>
+          ) : node.kind === "end" ? (
+            <div className="final-actions">
+              <p className="final">Cette branche est terminée.</p>
+              {!viewedSession.completedAt && (
+                <button
+                  className="complete-button"
+                  onClick={() => complete("completed")}
+                >
+                  Terminer et enregistrer
+                </button>
+              )}
+              <button
+                onClick={() =>
+                  download(
+                    `${currentTree.title}-rapport.md`,
+                    markdownReport(currentTree, viewedSession),
+                  )
+                }
+              >
+                Exporter le compte rendu
+              </button>
+            </div>
+          ) : (
+            <>
+              <label className="note">
+                Note de cette étape
+                <textarea
+                  value={note}
+                  placeholder="Observations, résultats, éléments à retenir…"
+                  onChange={(event) => setNote(event.target.value)}
+                />
+              </label>
+              <div className="status-actions">
+                {(Object.keys(statusLabel) as StepStatus[]).map((status) => (
+                  <button
+                    key={status}
+                    className={
+                      status === "completed"
+                        ? "complete-button"
+                        : status === "blocked"
+                          ? "danger"
+                          : ""
+                    }
+                    onClick={() => complete(status)}
+                  >
+                    {statusLabel[status]}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </article>
+        <ReadOnlyTreeMap
+          tree={currentTree}
+          session={session ?? viewedSession}
+          currentNodeId={node.id}
+          viewedCheckpointIndex={checkpointIndex}
+          onVisit={(targetCheckpoint) => setCursor(targetCheckpoint)}
+        />
+      </div>
+      {pendingChange && (
+        <div
+          className="branch-dialog"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="branch-dialog-title"
+        >
+          <div>
+            <p className="eyebrow">Modifier l’historique</p>
+            <h2 id="branch-dialog-title">Conserver le parcours actuel ?</h2>
+            <p>
+              Vous êtes revenu à une étape antérieure. Cette action ouvre une
+              autre suite et les données relevées après cette étape ne
+              correspondent plus forcément.
+            </p>
+            <div className="branch-dialog-actions">
+              <button
+                className="primary"
+                onClick={() => resolvePendingChange("duplicate")}
+              >
+                Dupliquer le parcours
+              </button>
+              <button
+                className="danger"
+                onClick={() => resolvePendingChange("discard")}
+              >
+                Abandonner ces données
+              </button>
+              <button onClick={() => setPendingChange(undefined)}>
+                Annuler
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </section>
+  );
 }
