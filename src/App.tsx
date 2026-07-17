@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react'
 import { Background, Controls, Handle, MarkerType, MiniMap, Position, ReactFlow, useEdgesState, useNodesState, type Connection, type Edge, type Node, type NodeProps, type OnConnect } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { blankNode, blankTree, DecisionTreeSchema, osintEmailExample, type Choice, type DecisionTree, type ExecutionSession, type InputDefinition, type NodeKind, type StepStatus, type TreeNode } from './domain/model'
+import { blankNode, blankTree, DecisionTreeSchema, type Choice, type DecisionTree, type ExecutionSession, type InputDefinition, type NodeKind, type StepStatus, type TreeNode } from './domain/model'
 import { checkpointSession, createSession, discardAfterCheckpoint, duplicateAtCheckpoint, markdownReport, moveToTree, nextNode, recordStep, renderTemplate, replaceCurrentCheckpoint, safeExternalUrl, sessionAtCheckpoint, updateSessionVariables } from './domain/engine'
 import { pasteTreeNode, removeTreeNode } from './domain/editor'
 import { validateTree } from './domain/validate'
@@ -496,7 +496,6 @@ export default function App() {
           openTree={openTree}
           runTree={runTree}
           onNew={() => openTree(blankTree())}
-          onExample={() => openTree(osintEmailExample())}
           onDelete={(id) => void removeTree(id)}
           onSession={(session) => {
             const tree = trees.find((item) => item.id === session.treeId);
@@ -536,10 +535,10 @@ export default function App() {
 }
 
 type LibraryProps = {
-  trees: DecisionTree[]; sessions: ExecutionSession[]; openTree: (tree: DecisionTree) => void; runTree: (tree: DecisionTree) => void; onNew: () => void; onExample: () => void; onDelete: (id: string) => void; onSession: (session: ExecutionSession) => void; onDeleteSession: (id: string) => void; theme: 'light' | 'dark'; toggleTheme: () => void
+  trees: DecisionTree[]; sessions: ExecutionSession[]; openTree: (tree: DecisionTree) => void; runTree: (tree: DecisionTree) => void; onNew: () => void; onDelete: (id: string) => void; onSession: (session: ExecutionSession) => void; onDeleteSession: (id: string) => void; theme: 'light' | 'dark'; toggleTheme: () => void
 }
 
-function Library({ trees, sessions, openTree, runTree, onNew, onExample, onDelete, onSession, onDeleteSession, theme, toggleTheme }: LibraryProps) {
+function Library({ trees, sessions, openTree, runTree, onNew, onDelete, onSession, onDeleteSession, theme, toggleTheme }: LibraryProps) {
   const [query, setQuery] = useState('')
   const input = useRef<HTMLInputElement>(null)
   const importTree = async (file?: File) => {
@@ -553,7 +552,9 @@ function Library({ trees, sessions, openTree, runTree, onNew, onExample, onDelet
       openTree(tree)
     } catch { alert('Ce fichier ne correspond pas à un arbre valide.') }
   }
-  const filtered = trees.filter((tree) => tree.title.toLowerCase().includes(query.toLowerCase()))
+  const filtered = trees
+    .filter((tree) => tree.title.toLowerCase().includes(query.toLowerCase()))
+    .sort((left, right) => Number(Boolean(right.isExample)) - Number(Boolean(left.isExample)))
   const scrollToSessions = () => document.getElementById('sessions')?.scrollIntoView({ behavior: 'smooth' })
 
   return <section className="library-shell">
@@ -568,8 +569,8 @@ function Library({ trees, sessions, openTree, runTree, onNew, onExample, onDelet
     </aside>
     <div className="library-workspace">
       <header className="workspace-head"><label className="search"><span>⌕</span><input aria-label="Rechercher un arbre" placeholder="Rechercher un arbre…" value={query} onChange={(event) => setQuery(event.target.value)} /></label><div className="workspace-actions"><button className="import-button" onClick={() => input.current?.click()}>Importer</button><button className="primary" onClick={onNew}>+ Nouvel arbre</button><input ref={input} hidden type="file" accept="application/json" onChange={(event) => void importTree(event.target.files?.[0])} /></div></header>
-      <section className="library-content"><div className="section-heading"><div><p className="eyebrow">Espace de travail</p><h1>Arbres de décision</h1></div><div className="section-heading-actions"><button onClick={onExample}>Exemple e-mail</button><span>{filtered.length} arbre{filtered.length > 1 ? 's' : ''}</span></div></div>
-        {filtered.length ? <div className="cards">{filtered.map((tree) => <article className="tree-card" key={tree.id}><button className="tree-thumb" onClick={() => openTree(tree)} aria-label={`Ouvrir ${tree.title}`}><TreePreview tree={tree} /></button><div className="card-main"><p className="eyebrow">{tree.nodes.filter((node) => node.kind !== 'start').length} étapes · modifié {new Date(tree.updatedAt).toLocaleDateString('fr-FR')}</p><h3>{tree.title}</h3><p>{tree.description || 'Ajoutez une description pour guider les personnes qui suivront ce parcours.'}</p></div><div className="card-actions"><button onClick={() => runTree(tree)}>Lancer</button><button onClick={() => openTree(tree)}>Modifier</button><button aria-label="Exporter" onClick={() => download(`${tree.title}.json`, JSON.stringify({ format: 'decision-tree-package', schemaVersion: 1, exportedAt: new Date().toISOString(), tree }, null, 2))}>⇩</button><button className="danger icon-button" aria-label="Supprimer" onClick={() => confirm(`Supprimer « ${tree.title} » ?`) && onDelete(tree.id)}>×</button></div></article>)}</div> : <div className="empty-state"><Logo compact /><h2>Aucun arbre ne correspond</h2><p>Créez votre premier parcours ou modifiez votre recherche.</p><button className="primary" onClick={onNew}>+ Nouvel arbre</button></div>}
+      <section className="library-content"><div className="section-heading"><div><p className="eyebrow">Espace de travail</p><h1>Arbres de décision</h1></div><span>{filtered.length} arbre{filtered.length > 1 ? 's' : ''}</span></div>
+        {filtered.length ? <div className="cards">{filtered.map((tree) => <article className={`tree-card${tree.isExample ? ' example' : ''}`} key={tree.id}><button className="tree-thumb" onClick={() => openTree(tree)} aria-label={`Ouvrir ${tree.title}`}><TreePreview tree={tree} /></button><div className="card-main"><p className="eyebrow">{tree.isExample && <span className="example-badge">Exemple de référence</span>}{tree.nodes.filter((node) => node.kind !== 'start').length} étapes · modifié {new Date(tree.updatedAt).toLocaleDateString('fr-FR')}</p><h3>{tree.title}</h3><p>{tree.description || 'Ajoutez une description pour guider les personnes qui suivront ce parcours.'}</p></div><div className="card-actions"><button onClick={() => runTree(tree)}>Lancer</button><button onClick={() => openTree(tree)}>Modifier</button><button aria-label="Exporter" onClick={() => download(`${tree.title}.json`, JSON.stringify({ format: 'decision-tree-package', schemaVersion: 1, exportedAt: new Date().toISOString(), tree }, null, 2))}>⇩</button><button className="danger icon-button" aria-label="Supprimer" onClick={() => confirm(`Supprimer « ${tree.title} » ?`) && onDelete(tree.id)}>×</button></div></article>)}</div> : <div className="empty-state"><Logo compact /><h2>Aucun arbre ne correspond</h2><p>Créez votre premier parcours ou modifiez votre recherche.</p><button className="primary" onClick={onNew}>+ Nouvel arbre</button></div>}
         <section id="sessions" className="sessions-section"><div className="section-heading compact"><h2>Sessions</h2><span>{sessions.length} enregistrée{sessions.length > 1 ? 's' : ''}</span></div><div className="sessions">{sessions.length ? sessions.map((session) => <article key={session.id}><span className={`session-dot ${session.completedAt ? 'done' : ''}`} /><div><strong>{session.treeTitle}</strong><p>{session.completedAt ? 'Terminée' : 'En cours'} · {session.steps.length} étape{session.steps.length > 1 ? 's' : ''}</p></div><span className={`session-state ${session.completedAt ? 'done' : ''}`}>{session.completedAt ? 'Terminée' : 'En cours'}</span><button onClick={() => onSession(session)}>{session.completedAt ? 'Consulter' : 'Reprendre'}</button><button className="danger icon-button" aria-label="Supprimer la session" onClick={() => confirm('Supprimer cette session ?') && onDeleteSession(session.id)}>×</button></article>) : <p className="empty">Vos parcours interrompus ou terminés apparaîtront ici.</p>}</div></section>
       </section>
     </div>

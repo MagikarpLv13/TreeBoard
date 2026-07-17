@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { db } from '../data/db'
-import { emailExample, type DecisionTree, type ExecutionSession } from '../domain/model'
+import { osintEmailExample, type DecisionTree, type ExecutionSession } from '../domain/model'
 type Screen = 'library' | 'editor' | 'run'
 interface State { trees: DecisionTree[]; sessions: ExecutionSession[]; activeTree?: DecisionTree; activeSession?: ExecutionSession; screen: Screen; loaded: boolean; load: () => Promise<void>; saveTree: (tree: DecisionTree) => Promise<void>; removeTree: (id: string) => Promise<void>; setScreen: (screen: Screen) => void; setActiveTree: (tree?: DecisionTree) => void; saveSession: (session: ExecutionSession) => Promise<void>; setActiveSession: (session?: ExecutionSession) => void; removeSession: (id: string) => Promise<void> }
 let loadPromise: Promise<void> | undefined
@@ -12,10 +12,16 @@ export const useAppStore = create<State>((set, get) => ({
     loadPromise = (async () => {
       const trees = await db.transaction('rw', db.trees, async () => {
         const existing = await db.trees.orderBy('updatedAt').reverse().toArray()
-        if (existing.length) return existing
-        const example = emailExample()
+        const savedExample = existing.find((tree) => tree.isExample || tree.title === 'Qualification d’une adresse e-mail')
+        if (savedExample) {
+          if (savedExample.isExample) return existing
+          const markedExample = { ...savedExample, isExample: true }
+          await db.trees.put(markedExample)
+          return existing.map((tree) => tree.id === markedExample.id ? markedExample : tree)
+        }
+        const example = osintEmailExample()
         await db.trees.add(example)
-        return [example]
+        return [example, ...existing]
       })
       set({ trees, sessions: await db.sessions.orderBy('updatedAt').reverse().toArray(), loaded: true })
     })()

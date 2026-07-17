@@ -10,7 +10,7 @@ export interface ToolLink { id: string; label: string; urlTemplate: string }
 export interface Choice { id: string; label: string; value: string }
 export interface TreeNode { id: string; kind: NodeKind; title: string; body: string; position: { x: number; y: number }; choices?: Choice[]; links?: ToolLink[]; targetTreeId?: string }
 export interface TreeEdge { id: string; source: string; target: string; choiceValue?: string; sourceHandle?: string; targetHandle?: string }
-export interface DecisionTree { id: string; title: string; description: string; schemaVersion: 1; createdAt: string; updatedAt: string; inputs: InputDefinition[]; nodes: TreeNode[]; edges: TreeEdge[] }
+export interface DecisionTree { id: string; title: string; description: string; schemaVersion: 1; createdAt: string; updatedAt: string; isExample?: boolean; inputs: InputDefinition[]; nodes: TreeNode[]; edges: TreeEdge[] }
 export interface StepExecution { id: string; nodeId: string; at: string; status: StepStatus; answer?: string; note?: string; treeId?: string; treeTitle?: string; nodeTitle?: string }
 export interface VariableUpdate { id: string; at: string; nodeId: string; treeId: string; changes: Record<string, string>; removed?: string[] }
 export interface SessionCheckpoint { treeId: string; treeTitle: string; currentNodeId: string; variables: Record<string, string>; steps: StepExecution[]; variableUpdates?: VariableUpdate[]; completedAt?: string }
@@ -26,7 +26,7 @@ export const blankTree = (): DecisionTree => {
 }
 
 export const DecisionTreeSchema = z.object({
-  id: z.string().uuid(), title: z.string().min(1).max(160), description: z.string().max(5000), schemaVersion: z.literal(1), createdAt: z.string().datetime(), updatedAt: z.string().datetime(),
+  id: z.string().uuid(), title: z.string().min(1).max(160), description: z.string().max(5000), schemaVersion: z.literal(1), createdAt: z.string().datetime(), updatedAt: z.string().datetime(), isExample: z.boolean().optional(),
   inputs: z.array(z.object({ id: z.string().min(1), label: z.string().min(1), type: z.enum(['text', 'textarea', 'email', 'url', 'number', 'date', 'select', 'checkbox']), required: z.boolean(), description: z.string().optional(), defaultValue: z.string().optional(), options: z.array(z.string()).optional() })).max(100),
   nodes: z.array(z.object({ id: z.string().uuid(), kind: z.enum(NODE_TYPES), title: z.string().max(250), body: z.string().max(20000), position: z.object({ x: z.number(), y: z.number() }), choices: z.array(z.object({ id: z.string().uuid(), label: z.string(), value: z.string() })).optional(), links: z.array(z.object({ id: z.string().uuid(), label: z.string(), urlTemplate: z.string() })).optional(), targetTreeId: z.string().uuid().optional() })).max(500),
   edges: z.array(z.object({ id: z.string().uuid(), source: z.string().uuid(), target: z.string().uuid(), choiceValue: z.string().optional(), sourceHandle: z.string().optional(), targetHandle: z.string().optional() })).max(1000),
@@ -43,7 +43,7 @@ export function emailExample(): DecisionTree {
 }
 
 export function osintEmailExample(): DecisionTree {
-  const tree = blankTree(); tree.title = 'Qualification d’une adresse e-mail'; tree.description = 'Modèle de triage OSINT fondé sur des sources publiques, à utiliser uniquement dans un périmètre autorisé.'
+  const tree = blankTree(); tree.title = 'Qualification d’une adresse e-mail'; tree.description = 'Modèle de triage OSINT fondé sur des sources publiques, à utiliser uniquement dans un périmètre autorisé.'; tree.isExample = true
   tree.inputs = [{ id: 'email', label: 'Adresse e-mail', type: 'email', required: true, description: 'Saisie une seule fois pour les liens dynamiques.' }, { id: 'objective', label: 'Objectif et périmètre autorisé', type: 'textarea', required: true, description: 'Précisez le besoin légitime avant de commencer.' }]
   const epieos = { ...blankNode('action', { x: 80, y: 280 }), title: 'Consulter Epieos', body: 'Recherchez l’adresse, puis relevez uniquement les signaux accessibles publiquement et utiles à l’objectif défini.', links: [{ id: id(), label: 'Ouvrir Epieos', urlTemplate: 'https://epieos.com/' }] }
   const result = { ...blankNode('question', { x: 420, y: 280 }), title: 'Que renvoie la recherche ?', body: 'Choisissez le constat le plus proche. Ces branches sont des pistes à qualifier, pas des conclusions.', choices: [{ id: id(), label: 'Aucun signal exploitable', value: 'none' }, { id: id(), label: 'Signal de profil ou Maps', value: 'profile-maps' }, { id: id(), label: 'Calendrier ou disponibilité publique', value: 'calendar' }, { id: id(), label: 'Plusieurs éléments à recouper', value: 'cross-check' }] }
