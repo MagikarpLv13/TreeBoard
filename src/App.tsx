@@ -35,8 +35,17 @@ function Logo({ compact = false }: { compact?: boolean }) {
   </span>
 }
 
+function DownloadIcon() {
+  return <svg className="download-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false">
+    <path d="M12 3v12m0 0 4.5-4.5M12 15l-4.5-4.5M5 20h14" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+}
+
 function ThemeToggle({ theme, onChange }: { theme: 'light' | 'dark'; onChange: () => void }) {
-  return <button className="theme-toggle" type="button" onClick={onChange} aria-label={theme === 'light' ? 'Activer le thème sombre' : 'Activer le thème clair'}>{theme === 'light' ? '◐' : '☼'}</button>
+  const label = theme === 'light' ? 'Activer le thème sombre' : 'Activer le thème clair'
+  return <button className="theme-toggle" type="button" onClick={onChange} aria-label={label} title={label}>
+    {theme === 'light' ? <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false"><path d="M20.2 15.2A8.5 8.5 0 0 1 8.8 3.8 8.5 8.5 0 1 0 20.2 15.2Z" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg> : <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="3.5" stroke="currentColor" strokeWidth="1.8" /><path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /></svg>}
+  </button>
 }
 
 function TreePreview({ tree }: { tree: DecisionTree }) {
@@ -218,16 +227,18 @@ function ReadOnlyTreeMap({
         <div className="tree-map-controls">
           <button
             aria-label="Dézoomer le graphe"
+            title="Dézoomer le graphe"
             onClick={() => adjustZoom(-0.2)}
             disabled={zoom <= 0.6}
           >
             −
           </button>
-          <button aria-label="Recentrer le graphe" onClick={focusCurrentNode}>
+          <button aria-label="Recentrer le graphe" title="Recentrer le graphe" onClick={focusCurrentNode}>
             Centrer
           </button>
           <button
             aria-label="Zoomer le graphe"
+            title="Zoomer le graphe"
             onClick={() => adjustZoom(0.2)}
             disabled={zoom >= 1.8}
           >
@@ -559,19 +570,19 @@ function Library({ trees, sessions, openTree, runTree, onNew, onDelete, onSessio
 
   return <section className="library-shell">
     <aside className="library-rail">
-      <button className="brand" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}><Logo /></button>
+      <button className="brand" title="Revenir en haut de la bibliothèque" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}><Logo /></button>
       <nav className="rail-nav" aria-label="Navigation principale">
-        <button className="active" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}><span>⌘</span>Arbres de décision <b>{trees.length}</b></button>
-        <button onClick={scrollToSessions}><span>◷</span>Sessions <b>{sessions.length}</b></button>
-        <button disabled><span>⌫</span>Corbeille</button>
+        <button className="active" aria-current="page" title="Afficher les arbres de décision" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}><span aria-hidden="true">⌘</span>Arbres de décision <b>{trees.length}</b></button>
+        <button title="Afficher les sessions enregistrées" onClick={scrollToSessions}><span aria-hidden="true">◷</span>Sessions <b>{sessions.length}</b></button>
+        <button title="Corbeille bientôt disponible" disabled><span aria-hidden="true">⌫</span>Corbeille</button>
       </nav>
-      <div className="rail-footer"><div className="storage-head"><span>Stockage local</span><span>IndexedDB</span></div><div className="storage-bar"><i /></div><p><b>●</b> Local uniquement</p><ThemeToggle theme={theme} onChange={toggleTheme} /></div>
+      <div className="rail-footer"><div className="storage-head"><span>Stockage local</span><span>IndexedDB</span></div><div className="storage-bar"><i /></div><p><b aria-hidden="true">●</b> Local uniquement</p></div>
     </aside>
     <div className="library-workspace">
-      <header className="workspace-head"><label className="search"><span>⌕</span><input aria-label="Rechercher un arbre" placeholder="Rechercher un arbre…" value={query} onChange={(event) => setQuery(event.target.value)} /></label><div className="workspace-actions"><button className="import-button" onClick={() => input.current?.click()}>Importer</button><button className="primary" onClick={onNew}>+ Nouvel arbre</button><input ref={input} hidden type="file" accept="application/json" onChange={(event) => void importTree(event.target.files?.[0])} /></div></header>
+      <header className="workspace-head"><label className="search"><span aria-hidden="true">⌕</span><input aria-label="Rechercher un arbre" placeholder="Rechercher un arbre…" value={query} onChange={(event) => setQuery(event.target.value)} /></label><div className="workspace-actions"><button className="import-button" title="Importer un arbre depuis un fichier JSON" onClick={() => input.current?.click()}>Importer</button><button className="primary" title="Créer un nouvel arbre de décision" onClick={onNew}>+ Nouvel arbre</button><ThemeToggle theme={theme} onChange={toggleTheme} /><input ref={input} hidden type="file" accept="application/json" onChange={(event) => void importTree(event.target.files?.[0])} /></div></header>
       <section className="library-content"><div className="section-heading"><div><p className="eyebrow">Espace de travail</p><h1>Arbres de décision</h1></div><span>{filtered.length} arbre{filtered.length > 1 ? 's' : ''}</span></div>
-        {filtered.length ? <div className="cards">{filtered.map((tree) => <article className={`tree-card${tree.isExample ? ' example' : ''}`} key={tree.id}><button className="tree-thumb" onClick={() => openTree(tree)} aria-label={`Ouvrir ${tree.title}`}><TreePreview tree={tree} /></button><div className="card-main"><p className="eyebrow">{tree.isExample && <span className="example-badge">Exemple de référence</span>}{tree.nodes.filter((node) => node.kind !== 'start').length} étapes · modifié {new Date(tree.updatedAt).toLocaleDateString('fr-FR')}</p><h3>{tree.title}</h3><p>{tree.description || 'Ajoutez une description pour guider les personnes qui suivront ce parcours.'}</p></div><div className="card-actions"><button onClick={() => runTree(tree)}>Lancer</button><button onClick={() => openTree(tree)}>Modifier</button><button aria-label="Exporter" onClick={() => download(`${tree.title}.json`, JSON.stringify({ format: 'decision-tree-package', schemaVersion: 1, exportedAt: new Date().toISOString(), tree }, null, 2))}>⇩</button><button className="danger icon-button" aria-label="Supprimer" onClick={() => confirm(`Supprimer « ${tree.title} » ?`) && onDelete(tree.id)}>×</button></div></article>)}</div> : <div className="empty-state"><Logo compact /><h2>Aucun arbre ne correspond</h2><p>Créez votre premier parcours ou modifiez votre recherche.</p><button className="primary" onClick={onNew}>+ Nouvel arbre</button></div>}
-        <section id="sessions" className="sessions-section"><div className="section-heading compact"><h2>Sessions</h2><span>{sessions.length} enregistrée{sessions.length > 1 ? 's' : ''}</span></div><div className="sessions">{sessions.length ? sessions.map((session) => <article key={session.id}><span className={`session-dot ${session.completedAt ? 'done' : ''}`} /><div><strong>{session.treeTitle}</strong><p>{session.completedAt ? 'Terminée' : 'En cours'} · {session.steps.length} étape{session.steps.length > 1 ? 's' : ''}</p></div><span className={`session-state ${session.completedAt ? 'done' : ''}`}>{session.completedAt ? 'Terminée' : 'En cours'}</span><button onClick={() => onSession(session)}>{session.completedAt ? 'Consulter' : 'Reprendre'}</button><button className="danger icon-button" aria-label="Supprimer la session" onClick={() => confirm('Supprimer cette session ?') && onDeleteSession(session.id)}>×</button></article>) : <p className="empty">Vos parcours interrompus ou terminés apparaîtront ici.</p>}</div></section>
+        {filtered.length ? <div className="cards">{filtered.map((tree) => <article className={`tree-card${tree.isExample ? ' example' : ''}`} key={tree.id}><button className="tree-thumb" title={`Ouvrir « ${tree.title} »`} onClick={() => openTree(tree)} aria-label={`Ouvrir ${tree.title}`}><TreePreview tree={tree} /></button><div className="card-main"><p className="eyebrow">{tree.isExample && <span className="example-badge">Exemple de référence</span>}{tree.nodes.filter((node) => node.kind !== 'start').length} étapes · modifié {new Date(tree.updatedAt).toLocaleDateString('fr-FR')}</p><h3>{tree.title}</h3><p>{tree.description || 'Ajoutez une description pour guider les personnes qui suivront ce parcours.'}</p></div><div className="card-actions"><button title={`Lancer « ${tree.title} »`} onClick={() => runTree(tree)}>Lancer</button><button title={`Modifier « ${tree.title} »`} onClick={() => openTree(tree)}>Modifier</button><button className="icon-button" title={`Télécharger « ${tree.title} » au format JSON`} aria-label={`Télécharger ${tree.title} au format JSON`} onClick={() => download(`${tree.title}.json`, JSON.stringify({ format: 'decision-tree-package', schemaVersion: 1, exportedAt: new Date().toISOString(), tree }, null, 2))}><DownloadIcon /></button><button className="danger icon-button" title={`Supprimer « ${tree.title} »`} aria-label={`Supprimer ${tree.title}`} onClick={() => confirm(`Supprimer « ${tree.title} » ?`) && onDelete(tree.id)}>×</button></div></article>)}</div> : <div className="empty-state"><Logo compact /><h2>Aucun arbre ne correspond</h2><p>Créez votre premier parcours ou modifiez votre recherche.</p><button className="primary" title="Créer un nouvel arbre de décision" onClick={onNew}>+ Nouvel arbre</button></div>}
+        <section id="sessions" className="sessions-section"><div className="section-heading compact"><h2>Sessions</h2><span>{sessions.length} enregistrée{sessions.length > 1 ? 's' : ''}</span></div><div className="sessions">{sessions.length ? sessions.map((session) => <article key={session.id}><span className={`session-dot ${session.completedAt ? 'done' : ''}`} aria-hidden="true" /><div><strong>{session.treeTitle}</strong><p>{session.completedAt ? 'Terminée' : 'En cours'} · {session.steps.length} étape{session.steps.length > 1 ? 's' : ''}</p></div><span className={`session-state ${session.completedAt ? 'done' : ''}`}>{session.completedAt ? 'Terminée' : 'En cours'}</span><button title={`${session.completedAt ? 'Consulter' : 'Reprendre'} la session « ${session.treeTitle} »`} onClick={() => onSession(session)}>{session.completedAt ? 'Consulter' : 'Reprendre'}</button><button className="danger icon-button" title={`Supprimer la session « ${session.treeTitle} »`} aria-label={`Supprimer la session ${session.treeTitle}`} onClick={() => confirm('Supprimer cette session ?') && onDeleteSession(session.id)}>×</button></article>) : <p className="empty">Vos parcours interrompus ou terminés apparaîtront ici.</p>}</div></section>
       </section>
     </div>
   </section>
@@ -784,8 +795,8 @@ function Editor({ tree, trees, onBack, onSave, onRun, theme, toggleTheme }: { tr
   }
 
   return <section ref={editorRef} className="editor" style={{ '--inspector-width': `${inspectorWidth}px` } as CSSProperties}>
-    <div className="editor-top"><button className="back-button" onClick={leaveEditor} aria-label="Retour à la bibliothèque">←</button><span className="breadcrumb">Bibliothèque /</span><input className="tree-title" title={draft.title} aria-label="Titre de l’arbre" value={draft.title} onChange={(event) => commitDraft({ ...draft, title: event.target.value })} /><span className={`saved ${saveStatus === 'saving' ? 'saving' : ''}`}>● {saveStatus === 'saving' ? 'Enregistrement…' : 'Enregistré automatiquement'}</span><ThemeToggle theme={theme} onChange={toggleTheme} /><button className="primary" onClick={run}>Tester le parcours →</button></div>
-    <aside className="palette"><strong>Éléments</strong>{paletteKinds.map((kind) => <button key={kind} draggable title="Cliquez pour ajouter ou glissez sur le canvas pour positionner" onDragStart={(event) => event.dataTransfer.setData('application/treeboard-node', kind)} onClick={() => add(kind)}><i style={{ background: kindColor[kind] }} /><span>{nodeLabel[kind]}</span></button>)}<hr /><strong>Raccourcis</strong><p className="shortcut-help"><i>⌨</i><span>Suppr : supprimer<br />Ctrl/Cmd+Z : annuler<br />Ctrl/Cmd+Y : rétablir<br />Ctrl/Cmd+C / V : copier / coller</span></p><hr /><strong>Validation</strong>{issues.length ? issues.map((issue, index) => <p key={index} className={issue.level}><i>{issue.level === 'error' ? '!' : '△'}</i>{issue.message}</p>) : <p className="ok"><i>✓</i>Arbre prêt à être exécuté</p>}</aside>
+    <div className="editor-top"><button className="back-button" title="Retour à la bibliothèque" onClick={leaveEditor} aria-label="Retour à la bibliothèque">←</button><span className="breadcrumb">Bibliothèque /</span><input className="tree-title" title={draft.title} aria-label="Titre de l’arbre" value={draft.title} onChange={(event) => commitDraft({ ...draft, title: event.target.value })} /><span className={`saved ${saveStatus === 'saving' ? 'saving' : ''}`} role="status" aria-live="polite">● {saveStatus === 'saving' ? 'Enregistrement…' : 'Enregistré automatiquement'}</span><ThemeToggle theme={theme} onChange={toggleTheme} /><button className="primary" title="Tester ce parcours" onClick={run}>Tester le parcours →</button></div>
+    <aside className="palette"><strong>Éléments</strong>{paletteKinds.map((kind) => <button key={kind} draggable title={`Ajouter une étape « ${nodeLabel[kind]} » ou la glisser sur le canevas`} onDragStart={(event) => event.dataTransfer.setData('application/treeboard-node', kind)} onClick={() => add(kind)}><i style={{ background: kindColor[kind] }} aria-hidden="true" /><span>{nodeLabel[kind]}</span></button>)}<hr /><strong>Raccourcis</strong><p className="shortcut-help"><i aria-hidden="true">⌨</i><span>Suppr : supprimer<br />Ctrl/Cmd+Z : annuler<br />Ctrl/Cmd+Y : rétablir<br />Ctrl/Cmd+C / V : copier / coller</span></p><hr /><strong>Validation</strong>{issues.length ? issues.map((issue, index) => <p key={index} className={issue.level}><i aria-hidden="true">{issue.level === 'error' ? '!' : '△'}</i>{issue.message}</p>) : <p className="ok"><i aria-hidden="true">✓</i>Arbre prêt à être exécuté</p>}</aside>
     <div className="canvas" onDragOver={(event) => event.preventDefault()} onDrop={onDrop}>
       <ReactFlow
         nodes={nodes} edges={edges} nodeTypes={nodeTypes} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange}
@@ -793,16 +804,16 @@ function Editor({ tree, trees, onBack, onSave, onRun, theme, toggleTheme }: { tr
         onConnect={onConnect} onNodeDragStop={(_, node) => commitDraft((current) => ({ ...current, nodes: current.nodes.map((item) => item.id === node.id ? { ...item, position: node.position } : item) }))} onNodeClick={(_, node) => { setSelectedEdgeId(undefined); setSelected(node.id); setInspectorTab('node') }} onEdgeClick={(_, edge) => { setSelected(undefined); setSelectedEdgeId(edge.id); setInspectorTab('tree') }} onPaneClick={() => { setSelected(undefined); setSelectedEdgeId(undefined); setInspectorTab('tree') }} fitView
       ><Background gap={22} size={1} color="var(--canvas-dot)" /><Controls showInteractive={false} /><MiniMap pannable zoomable nodeColor={(node) => kindColor[(node.data as unknown as FlowNodeData).node.kind]} /></ReactFlow>
     </div>
-    <div className="inspector-shell"><div className="inspector-resizer" role="separator" tabIndex={0} aria-orientation="vertical" aria-label="Redimensionner le panneau de droite" aria-valuemin={300} aria-valuemax={520} aria-valuenow={inspectorWidth} onPointerDown={(event) => { event.preventDefault(); setIsResizingInspector(true) }} onKeyDown={(event) => { if (event.key === 'ArrowLeft') setInspectorWidth((current) => Math.min(520, current + 20)); if (event.key === 'ArrowRight') setInspectorWidth((current) => Math.max(300, current - 20)) }} /><aside className="inspector"><div className="inspector-tabs"><button className={inspectorTab === 'tree' ? 'active' : ''} onClick={() => setInspectorTab('tree')}>Arbre</button><button className={inspectorTab === 'node' ? 'active' : ''} disabled={!selectedNode} onClick={() => setInspectorTab('node')}>Étape</button></div>{inspectorTab === 'node' && selectedNode ? <NodeInspector key={selectedNode.id} node={selectedNode} nodes={draft.nodes} edges={draft.edges} inputs={draft.inputs} availableTrees={trees.filter((candidate) => candidate.id !== draft.id)} update={updateNode} updateChoices={updateQuestionChoices} assignPath={assignQuestionPath} createResultBranches={createResultBranches} canCreateResultBranches={!draft.edges.some((edge) => edge.source === selectedNode.id)} onRemove={deleteSelectedNode} /> : <TreeInspector tree={draft} selectedEdgeId={selectedEdgeId} removeSelectedEdge={() => selectedEdgeId && deleteEdges([selectedEdgeId])} update={(patch) => commitDraft((current) => ({ ...current, ...patch }))} addInput={addInput} updateInput={(index, patch) => commitDraft((current) => ({ ...current, inputs: current.inputs.map((item, at) => at === index ? { ...item, ...patch } : item) }))} removeInput={(index) => commitDraft((current) => ({ ...current, inputs: current.inputs.filter((_, at) => at !== index) }))} />}</aside></div>
+    <div className="inspector-shell"><div className="inspector-resizer" role="separator" tabIndex={0} title="Redimensionner le panneau de droite avec les flèches gauche et droite" aria-orientation="vertical" aria-label="Redimensionner le panneau de droite" aria-valuemin={300} aria-valuemax={520} aria-valuenow={inspectorWidth} onPointerDown={(event) => { event.preventDefault(); setIsResizingInspector(true) }} onKeyDown={(event) => { if (event.key === 'ArrowLeft') setInspectorWidth((current) => Math.min(520, current + 20)); if (event.key === 'ArrowRight') setInspectorWidth((current) => Math.max(300, current - 20)) }} /><aside className="inspector"><div className="inspector-tabs" role="group" aria-label="Panneau de propriétés"><button aria-pressed={inspectorTab === 'tree'} className={inspectorTab === 'tree' ? 'active' : ''} title="Afficher les propriétés de l’arbre" onClick={() => setInspectorTab('tree')}>Arbre</button><button aria-pressed={inspectorTab === 'node'} className={inspectorTab === 'node' ? 'active' : ''} title={selectedNode ? 'Afficher les propriétés de l’étape sélectionnée' : 'Sélectionnez une étape pour afficher ses propriétés'} disabled={!selectedNode} onClick={() => setInspectorTab('node')}>Étape</button></div>{inspectorTab === 'node' && selectedNode ? <NodeInspector key={selectedNode.id} node={selectedNode} nodes={draft.nodes} edges={draft.edges} inputs={draft.inputs} availableTrees={trees.filter((candidate) => candidate.id !== draft.id)} update={updateNode} updateChoices={updateQuestionChoices} assignPath={assignQuestionPath} createResultBranches={createResultBranches} canCreateResultBranches={!draft.edges.some((edge) => edge.source === selectedNode.id)} onRemove={deleteSelectedNode} /> : <TreeInspector tree={draft} selectedEdgeId={selectedEdgeId} removeSelectedEdge={() => selectedEdgeId && deleteEdges([selectedEdgeId])} update={(patch) => commitDraft((current) => ({ ...current, ...patch }))} addInput={addInput} updateInput={(index, patch) => commitDraft((current) => ({ ...current, inputs: current.inputs.map((item, at) => at === index ? { ...item, ...patch } : item) }))} removeInput={(index) => commitDraft((current) => ({ ...current, inputs: current.inputs.filter((_, at) => at !== index) }))} />}</aside></div>
   </section>
 }
 
 function TreeInspector({ tree, selectedEdgeId, removeSelectedEdge, update, addInput, updateInput, removeInput }: { tree: DecisionTree; selectedEdgeId?: string; removeSelectedEdge: () => void; update: (patch: Partial<Pick<DecisionTree, 'title' | 'description'>>) => void; addInput: () => void; updateInput: (index: number, patch: Partial<InputDefinition>) => void; removeInput: (index: number) => void }) {
-  return <>{selectedEdgeId && <section className="edge-inspector"><strong>Connexion sélectionnée</strong><span>Supprimez ce lien ou utilisez la touche Suppr.</span><button className="danger" onClick={removeSelectedEdge}>Supprimer le lien</button></section>}<h3>Propriétés de l’arbre</h3><label>Titre de l’arbre<textarea className="tree-title-editor" rows={2} value={tree.title} onChange={(event) => update({ title: event.target.value })} /></label><label>Description<textarea value={tree.description} onChange={(event) => update({ description: event.target.value })} /></label><div className="input-head"><h3>Données initiales</h3><button onClick={addInput}>+ Ajouter</button></div>{tree.inputs.map((input, index) => <InputEditor key={input.id} input={input} update={(patch) => updateInput(index, patch)} remove={() => removeInput(index)} />)}</>
+  return <>{selectedEdgeId && <section className="edge-inspector"><strong>Connexion sélectionnée</strong><span>Supprimez ce lien ou utilisez la touche Suppr.</span><button className="danger" title="Supprimer la connexion sélectionnée" onClick={removeSelectedEdge}>Supprimer le lien</button></section>}<h3>Propriétés de l’arbre</h3><label>Titre de l’arbre<textarea className="tree-title-editor" rows={2} value={tree.title} onChange={(event) => update({ title: event.target.value })} /></label><label>Description<textarea value={tree.description} onChange={(event) => update({ description: event.target.value })} /></label><div className="input-head"><h3>Données initiales</h3><button title="Ajouter une donnée initiale" onClick={addInput}>+ Ajouter</button></div>{tree.inputs.map((input, index) => <InputEditor key={input.id} input={input} update={(patch) => updateInput(index, patch)} remove={() => removeInput(index)} />)}</>
 }
 
 function InputEditor({ input, update, remove }: { input: InputDefinition; update: (patch: Partial<InputDefinition>) => void; remove: () => void }) {
-  return <div className="input-editor"><input aria-label="Libellé du champ" value={input.label} onChange={(event) => update({ label: event.target.value })} /><input aria-label="Identifiant du champ" className="mono" value={input.id} onChange={(event) => update({ id: event.target.value.replace(/[^\w-]/g, '_') })} /><select value={input.type} onChange={(event) => update({ type: event.target.value as InputDefinition['type'] })}>{['text', 'textarea', 'email', 'url', 'number', 'date', 'checkbox'].map((type) => <option key={type}>{type}</option>)}</select><label><input type="checkbox" checked={input.required} onChange={(event) => update({ required: event.target.checked })} /> obligatoire</label><button className="danger" onClick={remove}>Supprimer</button></div>
+  return <div className="input-editor"><input aria-label="Libellé du champ" value={input.label} onChange={(event) => update({ label: event.target.value })} /><input aria-label="Identifiant du champ" className="mono" value={input.id} onChange={(event) => update({ id: event.target.value.replace(/[^\w-]/g, '_') })} /><select aria-label={`Type de la donnée ${input.label}`} title={`Type de la donnée ${input.label}`} value={input.type} onChange={(event) => update({ type: event.target.value as InputDefinition['type'] })}>{['text', 'textarea', 'email', 'url', 'number', 'date', 'checkbox'].map((type) => <option key={type}>{type}</option>)}</select><label><input type="checkbox" checked={input.required} onChange={(event) => update({ required: event.target.checked })} /> obligatoire</label><button className="danger" title={`Supprimer la donnée « ${input.label} »`} onClick={remove}>Supprimer</button></div>
 }
 
 function insertTemplateAtCursor(field: HTMLTextAreaElement | null, value: string, template: string, update: (next: string) => void) {
@@ -815,7 +826,7 @@ function insertTemplateAtCursor(field: HTMLTextAreaElement | null, value: string
 
 function ActionTemplateBuilder({ inputs, insertInstruction, insertLink }: { inputs: InputDefinition[]; insertInstruction: (template: string) => void; insertLink: (template: string) => void }) {
   if (!inputs.length) return <p className="template-empty">Ajoutez des données initiales dans l’onglet Arbre pour les réutiliser ici.</p>
-  return <section className="action-template-builder"><div><strong>Insérer une donnée</strong><span>dans les instructions ou dans une URL</span></div>{inputs.map((input) => <div className="template-data" key={input.id}><span title={input.id}>{input.label}</span><button onClick={() => insertInstruction(`{{${input.id}}}`)}>Instruction</button><button onClick={() => insertLink(`{{${input.id}|urlencode}}`)}>Lien</button></div>)}</section>
+  return <section className="action-template-builder"><div><strong>Insérer une donnée</strong><span>dans les instructions ou dans une URL</span></div>{inputs.map((input) => <div className="template-data" key={input.id}><span title={input.id}>{input.label}</span><button title={`Insérer ${input.label} dans les instructions`} onClick={() => insertInstruction(`{{${input.id}}}`)}>Instruction</button><button title={`Insérer ${input.label} dans un lien`} onClick={() => insertLink(`{{${input.id}|urlencode}}`)}>Lien</button></div>)}</section>
 }
 
 function NodeInspector({ node, nodes, edges, inputs, availableTrees, update, updateChoices, assignPath, createResultBranches, canCreateResultBranches, onRemove }: { node: TreeNode; nodes: TreeNode[]; edges: DecisionTree['edges']; inputs: InputDefinition[]; availableTrees: DecisionTree[]; update: (patch: Partial<TreeNode>) => void; updateChoices: (choices: Choice[]) => void; assignPath: (choice: Choice, targetId: string) => void; createResultBranches: () => void; canCreateResultBranches: boolean; onRemove: () => void }) {
@@ -826,7 +837,7 @@ function NodeInspector({ node, nodes, edges, inputs, availableTrees, update, upd
     setLinkText(value)
     update({ links: value.split('\n').filter(Boolean).map((line) => { const separator = line.indexOf('|'); return { id: crypto.randomUUID(), label: (separator < 0 ? line : line.slice(0, separator)).trim() || 'Lien', urlTemplate: (separator < 0 ? '' : line.slice(separator + 1)).trim() } }) })
   }
-  return <><div className="inspector-title"><div><i style={{ background: kindColor[node.kind] }} /><h3>{nodeLabel[node.kind]}</h3></div><button className="danger icon-button" onClick={onRemove} aria-label="Supprimer l’étape">×</button></div><label>Titre<input value={node.title} onChange={(event) => update({ title: event.target.value })} /></label><label>Instructions<textarea ref={instructions} value={node.body} onChange={(event) => update({ body: event.target.value })} /></label>{node.kind === 'handoff' && <section className="handoff-editor"><strong>Arbre à ouvrir</strong><span>Les données de la session (pseudo, URL, identifiants…) sont transmises à l’arbre choisi.</span><select value={node.targetTreeId ?? ''} onChange={(event) => update({ targetTreeId: event.target.value || undefined })}><option value="">— Choisir un arbre —</option>{availableTrees.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.title}</option>)}</select>{!availableTrees.length && <small>Créez et enregistrez d’abord un autre arbre.</small>}</section>}{node.kind === 'action' && <ActionTemplateBuilder inputs={inputs} insertInstruction={(template) => insertTemplateAtCursor(instructions.current, node.body, template, (body) => update({ body }))} insertLink={(template) => insertTemplateAtCursor(links.current, linkText, template, updateLinks)} />}{node.kind === 'action' && <section className="result-path-starter"><div><strong>Créer la suite selon le résultat</strong><span>Ajoute une décision et trois actions déjà reliées, prêtes à être renommées.</span></div><button className="primary" disabled={!canCreateResultBranches} onClick={createResultBranches}>+ Ajouter les branches de résultat</button>{!canCreateResultBranches && <small>Cette action est déjà reliée à une étape.</small>}</section>}{node.kind === 'question' && <QuestionPathsEditor node={node} nodes={nodes} edges={edges} updateChoices={updateChoices} assignPath={assignPath} />}{node.kind === 'action' && <label>Liens <span className="field-hint">libellé|URL modèle</span><textarea ref={links} className="mono" placeholder="Recherche|https://…?q={{email|urlencode}}" value={linkText} onChange={(event) => updateLinks(event.target.value)} /></label>}</>
+  return <><div className="inspector-title"><div><i style={{ background: kindColor[node.kind] }} aria-hidden="true" /><h3>{nodeLabel[node.kind]}</h3></div><button className="danger icon-button" title={`Supprimer l’étape « ${node.title} »`} onClick={onRemove} aria-label={`Supprimer l’étape ${node.title}`}>×</button></div><label>Titre<input value={node.title} onChange={(event) => update({ title: event.target.value })} /></label><label>Instructions<textarea ref={instructions} value={node.body} onChange={(event) => update({ body: event.target.value })} /></label>{node.kind === 'handoff' && <section className="handoff-editor"><strong>Arbre à ouvrir</strong><span>Les données de la session (pseudo, URL, identifiants…) sont transmises à l’arbre choisi.</span><select aria-label="Arbre à ouvrir" title="Choisir l’arbre à ouvrir" value={node.targetTreeId ?? ''} onChange={(event) => update({ targetTreeId: event.target.value || undefined })}><option value="">— Choisir un arbre —</option>{availableTrees.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.title}</option>)}</select>{!availableTrees.length && <small>Créez et enregistrez d’abord un autre arbre.</small>}</section>}{node.kind === 'action' && <ActionTemplateBuilder inputs={inputs} insertInstruction={(template) => insertTemplateAtCursor(instructions.current, node.body, template, (body) => update({ body }))} insertLink={(template) => insertTemplateAtCursor(links.current, linkText, template, updateLinks)} />}{node.kind === 'action' && <section className="result-path-starter"><div><strong>Créer la suite selon le résultat</strong><span>Ajoute une décision et trois actions déjà reliées, prêtes à être renommées.</span></div><button className="primary" title="Ajouter une décision et trois actions reliées" disabled={!canCreateResultBranches} onClick={createResultBranches}>+ Ajouter les branches de résultat</button>{!canCreateResultBranches && <small>Cette action est déjà reliée à une étape.</small>}</section>}{node.kind === 'question' && <QuestionPathsEditor node={node} nodes={nodes} edges={edges} updateChoices={updateChoices} assignPath={assignPath} />}{node.kind === 'action' && <label>Liens <span className="field-hint">libellé|URL modèle</span><textarea ref={links} className="mono" placeholder="Recherche|https://…?q={{email|urlencode}}" value={linkText} onChange={(event) => updateLinks(event.target.value)} /></label>}</>
 }
 
 function QuestionPathsEditor({
@@ -870,6 +881,7 @@ function QuestionPathsEditor({
               <span>Chemin {index + 1}</span>
               <button
                 className="danger"
+                title={`Supprimer le chemin ${index + 1}`}
                 disabled={choices.length === 1}
                 onClick={() =>
                   updateChoices(choices.filter((item) => item.id !== choice.id))
@@ -921,6 +933,7 @@ function QuestionPathsEditor({
       })}
       <button
         className="add-path"
+        title="Ajouter un nouveau chemin de réponse"
         onClick={() =>
           updateChoices([
             ...choices,
@@ -1009,6 +1022,7 @@ function SessionDataEditor({
           />
           <button
             className="danger"
+            title={`Supprimer la donnée « ${entry.key || `Donnée ${index + 1}`} »`}
             onClick={() => {
               if (entry.key in session.variables)
                 setRemoved((current) => [...new Set([...current, entry.key])]);
@@ -1021,13 +1035,14 @@ function SessionDataEditor({
       ))}
       <div className="session-data-actions">
         <button
+          title="Ajouter une nouvelle donnée à la session"
           onClick={() =>
             setEntries((current) => [...current, { key: "", value: "" }])
           }
         >
           + Nouvelle donnée
         </button>
-        <button className="primary" onClick={() => void saveChanges()}>
+        <button className="primary" title="Enregistrer les données de la session" onClick={() => void saveChanges()}>
           Enregistrer les données
         </button>
       </div>
@@ -1108,7 +1123,7 @@ function Runner({
     return (
       <section className="runner start-run">
         <header className="run-head">
-          <button className="back-button" onClick={onBack} aria-label="Quitter">
+          <button className="back-button" title="Quitter le parcours" onClick={onBack} aria-label="Quitter">
             ←
           </button>
           <Logo />
@@ -1166,7 +1181,7 @@ function Runner({
               ))}
             </>
           ) : null}
-          <button className="primary launch-button" onClick={startSession}>
+          <button className="primary launch-button" title="Lancer l’analyse" onClick={startSession}>
             Lancer l’analyse →
           </button>
         </div>
@@ -1175,14 +1190,14 @@ function Runner({
   if (!viewedSession)
     return (
       <section className="runner missing-step">
-        <button onClick={onBack}>← Bibliothèque</button>
+        <button title="Retour à la bibliothèque" onClick={onBack}>← Bibliothèque</button>
         <p>Cette session ne peut pas être restaurée.</p>
       </section>
     );
   if (!node)
     return (
       <section className="runner missing-step">
-        <button onClick={onBack}>← Bibliothèque</button>
+        <button title="Retour à la bibliothèque" onClick={onBack}>← Bibliothèque</button>
         <p>Cette étape n’existe plus dans l’arbre.</p>
       </section>
     );
@@ -1280,12 +1295,12 @@ function Runner({
   return (
     <section className="runner">
       <header className="run-head">
-        <button className="back-button" onClick={onBack} aria-label="Quitter">
+        <button className="back-button" title="Quitter le parcours" onClick={onBack} aria-label="Quitter">
           ←
         </button>
         <div className="run-title">
           <strong>{currentTree.title}</strong>
-          <div className="progress">
+          <div className="progress" role="progressbar" aria-label="Progression du parcours" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}>
             <span style={{ width: `${progress}%` }} />
           </div>
         </div>
@@ -1293,13 +1308,14 @@ function Runner({
         {timeline.length > 1 && (
           <button
             className="previous-step"
+            title="Revenir à l’étape précédente"
             disabled={checkpointIndex === 0}
             onClick={() => setCursor((index) => Math.max(0, index - 1))}
           >
             ← Étape précédente
           </button>
         )}
-        <span className="session-saved">
+        <span className="session-saved" role="status" aria-live="polite">
           {isReviewing
             ? "◷ Consultation de l’historique"
             : "● Session enregistrée"}
@@ -1329,6 +1345,7 @@ function Runner({
               <button
                 key={step.id}
                 className={`history${isCurrentHistory ? " history-current" : isFutureHistory ? " history-future" : ""}`}
+                title={`Consulter l’étape « ${step.nodeTitle ?? step.treeTitle ?? currentTree.title} »`}
                 disabled={targetCheckpoint < 0}
                 aria-current={isCurrentHistory ? "step" : undefined}
                 onClick={() =>
@@ -1370,6 +1387,7 @@ function Runner({
                 return (
                   <button
                     key={link.id}
+                    title={url ? `Ouvrir ${link.label} sur ${new URL(url).hostname}` : `Le lien ${link.label} est invalide`}
                     disabled={!url}
                     onClick={() =>
                       url &&
@@ -1411,6 +1429,7 @@ function Runner({
               {node.choices?.map((choice) => (
                 <button
                   key={choice.id}
+                  title={`Choisir « ${choice.label} »`}
                   onClick={() => complete("completed", choice.value)}
                 >
                   <span>{choice.label}</span>
@@ -1429,7 +1448,7 @@ function Runner({
                   onChange={(event) => setNote(event.target.value)}
                 />
               </label>
-              <button className="primary launch-button" onClick={transfer}>
+              <button className="primary launch-button" title="Continuer le parcours dans l’autre arbre" onClick={transfer}>
                 Continuer dans l’autre arbre →
               </button>
             </>
@@ -1439,12 +1458,15 @@ function Runner({
               {!viewedSession.completedAt && (
                 <button
                   className="complete-button"
+                  title="Terminer et enregistrer ce parcours"
                   onClick={() => complete("completed")}
                 >
                   Terminer et enregistrer
                 </button>
               )}
               <button
+                className="button-with-icon"
+                title="Télécharger le compte rendu au format Markdown"
                 onClick={() =>
                   download(
                     `${currentTree.title}-rapport.md`,
@@ -1452,7 +1474,7 @@ function Runner({
                   )
                 }
               >
-                Exporter le compte rendu
+                <DownloadIcon /> Exporter le compte rendu
               </button>
             </div>
           ) : (
@@ -1469,6 +1491,7 @@ function Runner({
                 {(Object.keys(statusLabel) as StepStatus[]).map((status) => (
                   <button
                     key={status}
+                    title={`Marquer cette étape comme « ${statusLabel[status]} »`}
                     className={
                       status === "completed"
                         ? "complete-button"
@@ -1511,17 +1534,19 @@ function Runner({
             <div className="branch-dialog-actions">
               <button
                 className="primary"
+                title="Dupliquer le parcours à partir de cette étape"
                 onClick={() => resolvePendingChange("duplicate")}
               >
                 Dupliquer le parcours
               </button>
               <button
                 className="danger"
+                title="Abandonner les données enregistrées après cette étape"
                 onClick={() => resolvePendingChange("discard")}
               >
                 Abandonner ces données
               </button>
-              <button onClick={() => setPendingChange(undefined)}>
+              <button title="Annuler la modification de l’historique" onClick={() => setPendingChange(undefined)}>
                 Annuler
               </button>
             </div>
