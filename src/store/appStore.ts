@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { db } from '../data/db'
 import { osintEmailExample, type DecisionTree, type ExecutionSession } from '../domain/model'
+import { snapshotSessionTrees } from '../domain/engine'
 type Screen = 'library' | 'editor' | 'run'
 interface State { trees: DecisionTree[]; sessions: ExecutionSession[]; activeTree?: DecisionTree; activeSession?: ExecutionSession; screen: Screen; loaded: boolean; load: () => Promise<void>; saveTree: (tree: DecisionTree) => Promise<void>; removeTree: (id: string) => Promise<void>; setScreen: (screen: Screen) => void; setActiveTree: (tree?: DecisionTree) => void; saveSession: (session: ExecutionSession) => Promise<void>; setActiveSession: (session?: ExecutionSession) => void; removeSession: (id: string) => Promise<void> }
 let loadPromise: Promise<void> | undefined
@@ -23,7 +24,14 @@ export const useAppStore = create<State>((set, get) => ({
         await db.trees.add(example)
         return [example, ...existing]
       })
-      set({ trees, sessions: await db.sessions.orderBy('updatedAt').reverse().toArray(), loaded: true })
+      const sessions = await db.transaction('rw', db.sessions, async () => {
+        const existing = await db.sessions.orderBy('updatedAt').reverse().toArray()
+        const migrated = existing.map((session) => snapshotSessionTrees(session, trees))
+        const changed = migrated.filter((session, index) => session !== existing[index])
+        if (changed.length) await db.sessions.bulkPut(changed)
+        return migrated
+      })
+      set({ trees, sessions, loaded: true })
     })()
     try { await loadPromise } finally { loadPromise = undefined }
   },

@@ -14,7 +14,7 @@ export interface DecisionTree { id: string; title: string; description: string; 
 export interface StepExecution { id: string; nodeId: string; at: string; status: StepStatus; answer?: string; note?: string; treeId?: string; treeTitle?: string; nodeTitle?: string }
 export interface VariableUpdate { id: string; at: string; nodeId: string; treeId: string; changes: Record<string, string>; removed?: string[] }
 export interface SessionCheckpoint { treeId: string; treeTitle: string; currentNodeId: string; variables: Record<string, string>; steps: StepExecution[]; variableUpdates?: VariableUpdate[]; completedAt?: string }
-export interface ExecutionSession { id: string; treeId: string; treeTitle: string; createdAt: string; updatedAt: string; completedAt?: string; currentNodeId: string; variables: Record<string, string>; steps: StepExecution[]; variableUpdates?: VariableUpdate[]; timeline?: SessionCheckpoint[] }
+export interface ExecutionSession { id: string; treeId: string; treeTitle: string; createdAt: string; updatedAt: string; completedAt?: string; currentNodeId: string; variables: Record<string, string>; steps: StepExecution[]; variableUpdates?: VariableUpdate[]; timeline?: SessionCheckpoint[]; treeSnapshots?: Record<string, DecisionTree> }
 
 const id = () => crypto.randomUUID()
 const now = () => new Date().toISOString()

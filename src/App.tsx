@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, 
 import { Background, Controls, Handle, MarkerType, MiniMap, Position, ReactFlow, useEdgesState, useNodesState, type Connection, type Edge, type Node, type NodeProps, type OnConnect } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { blankNode, blankTree, DecisionTreeSchema, type Choice, type DecisionTree, type ExecutionSession, type InputDefinition, type NodeKind, type StepStatus, type TreeNode } from './domain/model'
-import { checkpointSession, createSession, discardAfterCheckpoint, duplicateAtCheckpoint, markdownReport, moveToTree, nextNode, recordStep, renderTemplate, replaceCurrentCheckpoint, safeExternalUrl, sessionAtCheckpoint, updateSessionVariables } from './domain/engine'
+import { checkpointSession, createSession, discardAfterCheckpoint, duplicateAtCheckpoint, getSessionTree, markdownReport, moveToTree, nextNode, recordStep, renderTemplate, replaceCurrentCheckpoint, safeExternalUrl, sessionAtCheckpoint, updateSessionVariables } from './domain/engine'
 import { pasteTreeNode, removeTreeNode } from './domain/editor'
 import { validateTree } from './domain/validate'
 import { useAppStore } from './store/appStore'
@@ -509,7 +509,7 @@ export default function App() {
           onNew={() => openTree(blankTree())}
           onDelete={(id) => void removeTree(id)}
           onSession={(session) => {
-            const tree = trees.find((item) => item.id === session.treeId);
+            const tree = getSessionTree(session, trees);
             if (tree) {
               setActiveTree(tree);
               setActiveSession(session);
@@ -1090,7 +1090,7 @@ function Runner({
     session && timeline.length && checkpointIndex < timeline.length - 1,
   );
   const currentTree = viewedSession
-    ? (trees.find((candidate) => candidate.id === viewedSession.treeId) ?? tree)
+    ? (getSessionTree(viewedSession, trees) ?? tree)
     : tree;
   const node = viewedSession
     ? currentTree.nodes.find((item) => item.id === viewedSession.currentNodeId)
@@ -1199,6 +1199,9 @@ function Runner({
       <section className="runner missing-step">
         <button title="Retour à la bibliothèque" onClick={onBack}>← Bibliothèque</button>
         <p>Cette étape n’existe plus dans l’arbre.</p>
+        <button onClick={() => download(`${viewedSession.treeTitle}-rapport.md`, markdownReport(currentTree, viewedSession))}>
+          Exporter les données enregistrées
+        </button>
       </section>
     );
   const runnableNodes = currentTree.nodes.filter(
@@ -1250,7 +1253,7 @@ function Runner({
     setNote("");
   };
   const transfer = () => {
-    const target = trees.find(
+    const target = (node.targetTreeId && viewedSession.treeSnapshots?.[node.targetTreeId]) || trees.find(
       (candidate) => candidate.id === node.targetTreeId,
     );
     if (!target)

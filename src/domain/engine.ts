@@ -36,7 +36,16 @@ export function initialNode(tree: DecisionTree): TreeNode | undefined {
 export function createSession(tree: DecisionTree, variables: Record<string, string>): ExecutionSession {
   const firstNode = initialNode(tree); if (!firstNode) throw new Error('Arbre sans première étape.')
   const at = new Date().toISOString()
-  return checkpointSession({ id: crypto.randomUUID(), treeId: tree.id, treeTitle: tree.title, createdAt: at, updatedAt: at, currentNodeId: firstNode.id, variables, steps: [], variableUpdates: [] })
+  return snapshotSessionTrees(checkpointSession({ id: crypto.randomUUID(), treeId: tree.id, treeTitle: tree.title, createdAt: at, updatedAt: at, currentNodeId: firstNode.id, variables, steps: [], variableUpdates: [] }), [tree])
+}
+export function getSessionTree(session: ExecutionSession, trees: DecisionTree[]): DecisionTree | undefined {
+  return session.treeSnapshots?.[session.treeId] ?? trees.find((tree) => tree.id === session.treeId)
+}
+export function snapshotSessionTrees(session: ExecutionSession, trees: DecisionTree[]): ExecutionSession {
+  const usedIds = new Set([session.treeId, ...(session.timeline ?? []).map((point) => point.treeId), ...session.steps.map((step) => step.treeId)])
+  const missing = trees.filter((tree) => usedIds.has(tree.id) && !session.treeSnapshots?.[tree.id])
+  if (!missing.length) return session
+  return { ...session, treeSnapshots: { ...session.treeSnapshots, ...Object.fromEntries(missing.map((tree) => [tree.id, structuredClone(tree)])) } }
 }
 export function sessionCheckpoint(session: ExecutionSession): SessionCheckpoint {
   return { treeId: session.treeId, treeTitle: session.treeTitle, currentNodeId: session.currentNodeId, variables: { ...session.variables }, steps: [...session.steps], variableUpdates: session.variableUpdates ? [...session.variableUpdates] : undefined, ...(session.completedAt ? { completedAt: session.completedAt } : {}) }
@@ -50,7 +59,7 @@ export function replaceCurrentCheckpoint(session: ExecutionSession): ExecutionSe
 }
 export function sessionAtCheckpoint(session: ExecutionSession, index: number): ExecutionSession {
   const checkpoint = session.timeline?.[index]
-  return checkpoint ? { ...session, ...checkpoint, variables: { ...checkpoint.variables }, steps: [...checkpoint.steps], variableUpdates: checkpoint.variableUpdates ? [...checkpoint.variableUpdates] : undefined } : session
+  return checkpoint ? { ...session, ...checkpoint, completedAt: checkpoint.completedAt, variables: { ...checkpoint.variables }, steps: [...checkpoint.steps], variableUpdates: checkpoint.variableUpdates ? [...checkpoint.variableUpdates] : undefined } : session
 }
 export function discardAfterCheckpoint(session: ExecutionSession, index: number): ExecutionSession {
   const restored = sessionAtCheckpoint(session, index)
@@ -74,9 +83,10 @@ export function updateSessionVariables(session: ExecutionSession, tree: Decision
   return replaceCurrentCheckpoint({ ...session, updatedAt: at, variables, variableUpdates: [...(session.variableUpdates ?? []), { id: crypto.randomUUID(), at, nodeId, treeId: tree.id, changes: cleaned, ...(removedKeys.length ? { removed: removedKeys } : {}) }] })
 }
 export function moveToTree(session: ExecutionSession, targetTree: DecisionTree): ExecutionSession {
-  const firstNode = initialNode(targetTree)
+  const target = session.treeSnapshots?.[targetTree.id] ?? targetTree
+  const firstNode = initialNode(target)
   if (!firstNode) throw new Error('L’arbre cible ne contient pas de première étape.')
-  return { ...session, treeId: targetTree.id, treeTitle: targetTree.title, currentNodeId: firstNode.id, updatedAt: new Date().toISOString() }
+  return snapshotSessionTrees({ ...session, treeId: target.id, treeTitle: target.title, currentNodeId: firstNode.id, updatedAt: new Date().toISOString() }, [target])
 }
 export function markdownReport(tree: DecisionTree, session: ExecutionSession): string {
   const details = Object.entries(session.variables).map(([key, value]) => `- **${key}** : ${value || '—'}`).join('\n')
