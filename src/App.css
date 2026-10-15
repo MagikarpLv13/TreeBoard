@@ -22,7 +22,10 @@
 
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;transition-duration:.01ms!important;animation-duration:.01ms!important;animation-iteration-count:1!important}}
 
-/* Keyboard shortcut hint in the editor palette. */
+  .progress.indeterminate span{width:30%;animation:progress-pending 1.8s ease-in-out infinite alternate}
+  @keyframes progress-pending{from{transform:translateX(0)}to{transform:translateX(230%)}}
+
+  /* Keyboard shortcut hint in the editor palette. */
 .palette p.shortcut-help{color:var(--text-secondary)}.palette p.shortcut-help i{background:var(--brand-tint);color:var(--brand);font-style:normal}.palette p.shortcut-help span{line-height:1.55}
 
 /* Editor hardening: title remains readable and tree settings stay available. */

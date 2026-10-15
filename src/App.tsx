@@ -5,6 +5,7 @@ import { blankNode, blankTree, DecisionTreeSchema, type Choice, type DecisionTre
 import { checkpointSession, createSession, discardAfterCheckpoint, duplicateAtCheckpoint, getSessionTree, markdownReport, moveToTree, nextNode, recordStep, renderTemplate, replaceCurrentCheckpoint, safeExternalUrl, sessionAtCheckpoint, updateSessionVariables } from './domain/engine'
 import { pasteTreeNode, removeTreeNode } from './domain/editor'
 import { validateTree } from './domain/validate'
+import { validateInputs } from './domain/inputs'
 import { useAppStore } from './store/appStore'
 import './App.css'
 
@@ -1111,8 +1112,8 @@ function Runner({
     void persist(change(viewedSession));
   };
   const startSession = () => {
-    if (tree.inputs.some((input) => input.required && !values[input.id]))
-      return alert("Complétez les champs obligatoires.");
+    const errors = validateInputs(tree.inputs, values);
+    if (errors.length) return alert(errors.join("\n"));
     try {
       void persist(createSession(tree, values));
     } catch {
@@ -1130,7 +1131,7 @@ function Runner({
           <span className="run-head-spacer" />
           <ThemeToggle theme={theme} onChange={toggleTheme} />
         </header>
-        <div className="run-card">
+        <form className="run-card" onSubmit={(event) => { event.preventDefault(); startSession(); }}>
           <p className="eyebrow">Parcours guidé</p>
           <h1>{tree.title}</h1>
           <p>
@@ -1146,15 +1147,22 @@ function Runner({
                   {input.required && " *"}
                   {input.type === "textarea" ? (
                     <textarea
+                      required={input.required}
                       value={values[input.id] ?? ""}
                       onChange={(event) =>
                         setValues({ ...values, [input.id]: event.target.value })
                       }
                     />
+                  ) : input.type === "select" ? (
+                    <select required={input.required} value={values[input.id] ?? ""} onChange={(event) => setValues({ ...values, [input.id]: event.target.value })}>
+                      <option value="">Choisir une option…</option>
+                      {input.options?.map((option) => <option key={option} value={option}>{option}</option>)}
+                    </select>
                   ) : (
                     <input
                       type={input.type === "checkbox" ? "checkbox" : input.type}
                       required={input.required}
+                      step={input.type === "number" ? "any" : undefined}
                       value={
                         input.type === "checkbox"
                           ? undefined
@@ -1181,10 +1189,10 @@ function Runner({
               ))}
             </>
           ) : null}
-          <button className="primary launch-button" title="Lancer l’analyse" onClick={startSession}>
+          <button type="submit" className="primary launch-button" title="Lancer l’analyse">
             Lancer l’analyse →
           </button>
-        </div>
+        </form>
       </section>
     );
   if (!viewedSession)
@@ -1204,15 +1212,8 @@ function Runner({
         </button>
       </section>
     );
-  const runnableNodes = currentTree.nodes.filter(
-    (item) => item.kind !== "start",
-  );
-  const progress = Math.min(
-    100,
-    Math.round(
-      (viewedSession.steps.length / Math.max(runnableNodes.length, 1)) * 100,
-    ),
-  );
+  const progress = viewedSession.completedAt ? 100 : undefined;
+  const progressLabel = progress === 100 ? "Parcours terminé" : `${viewedSession.steps.length} étape${viewedSession.steps.length > 1 ? "s" : ""} parcourue${viewedSession.steps.length > 1 ? "s" : ""} ; la suite dépend de vos choix`;
   const contextKeys = currentTree.inputs.map((input) => input.id);
   const contextEntries = Object.entries(viewedSession.variables).filter(
     ([key]) => contextKeys.includes(key),
@@ -1258,13 +1259,8 @@ function Runner({
     );
     if (!target)
       return alert("Choisissez un arbre cible existant dans l’éditeur.");
-    const missing = target.inputs.filter(
-      (input) => input.required && !viewedSession.variables[input.id],
-    );
-    if (missing.length)
-      return alert(
-        `Renseignez ces données avant de continuer : ${missing.map((input) => input.label).join(", ")}.`,
-      );
+    const errors = validateInputs(target.inputs, viewedSession.variables);
+    if (errors.length) return alert(errors.join("\n"));
     try {
       requestChange((base) =>
         checkpointSession(
@@ -1303,11 +1299,11 @@ function Runner({
         </button>
         <div className="run-title">
           <strong>{currentTree.title}</strong>
-          <div className="progress" role="progressbar" aria-label="Progression du parcours" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}>
-            <span style={{ width: `${progress}%` }} />
+          <div className={`progress${progress === undefined ? " indeterminate" : ""}`} role="progressbar" aria-label="Progression du parcours" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress} aria-valuetext={progressLabel}>
+            <span style={{ width: progress === undefined ? undefined : `${progress}%` }} />
           </div>
         </div>
-        <span className="progress-number">{progress}%</span>
+        <span className="progress-number">{progress === 100 ? "100%" : `${viewedSession.steps.length} étape${viewedSession.steps.length > 1 ? "s" : ""}`}</span>
         {timeline.length > 1 && (
           <button
             className="previous-step"
