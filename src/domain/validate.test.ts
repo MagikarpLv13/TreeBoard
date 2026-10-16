@@ -2,6 +2,13 @@ import { describe, expect, it } from 'vitest'
 import { blankTree, emailExample } from './model'
 import { validateTree } from './validate'
 describe('validation des arbres', () => {
+  it('signale une donnée supprimée ou renommée utilisée pour répondre automatiquement', () => {
+    const tree = emailExample()
+    tree.nodes[1].answerInputId = 'secteur'
+    expect(validateTree(tree).some((issue) => issue.level === 'error' && issue.message.includes('secteur'))).toBe(true)
+    tree.inputs.push({ id: 'secteur', label: 'Secteur', type: 'text', required: true })
+    expect(validateTree(tree).filter((issue) => issue.level === 'error')).toEqual([])
+  })
   it('détecte une absence de conclusion', () => expect(validateTree(blankTree()).some((issue) => issue.message.includes('conclusion'))).toBe(true))
   it('accepte une première étape sans nœud de départ', () => expect(validateTree(emailExample()).some((issue) => issue.message.includes('première étape'))).toBe(false))
   it('détecte les étapes inaccessibles', () => { const tree = emailExample(); tree.nodes.push({ ...tree.nodes[1], id: crypto.randomUUID(), title: 'Isolé' }); expect(validateTree(tree).some((issue) => issue.message.includes('inaccessible'))).toBe(true) })

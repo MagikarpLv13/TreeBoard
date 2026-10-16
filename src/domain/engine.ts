@@ -14,7 +14,7 @@ export function safeExternalUrl(template: string, variables: Record<string, stri
   const value = renderTemplate(template, variables).value
   try { const url = new URL(value); return ['https:', 'http:'].includes(url.protocol) ? url.href : null } catch { return null }
 }
-export function nextNode(tree: DecisionTree, node: TreeNode, answer?: string): TreeNode | undefined {
+function linkedNode(tree: DecisionTree, node: TreeNode, answer?: string): TreeNode | undefined {
   const outgoing = tree.edges.filter((item) => item.source === node.id)
   const edge = node.kind === 'question'
     ? outgoing.find((item) => item.choiceValue === answer)
@@ -22,19 +22,29 @@ export function nextNode(tree: DecisionTree, node: TreeNode, answer?: string): T
   return edge ? tree.nodes.find((candidate) => candidate.id === edge.target) : undefined
 }
 
-export function initialNode(tree: DecisionTree): TreeNode | undefined {
-  const targets = new Set(tree.edges.map((edge) => edge.target))
-  let current = tree.nodes.find((node) => node.kind === 'start' && !targets.has(node.id)) ?? tree.nodes.find((node) => !targets.has(node.id))
+function resolveNode(tree: DecisionTree, current: TreeNode | undefined, variables: Record<string, string>): TreeNode | undefined {
   const visited = new Set<string>()
-  while (current?.kind === 'start') {
-    if (visited.has(current.id)) return undefined
+  while (current && (current.kind === 'start' || (current.kind === 'question' && current.answerInputId))) {
+    if (visited.has(current.id)) return current.kind === 'start' ? undefined : current
     visited.add(current.id)
-    current = nextNode(tree, current)
+    const answer = current.answerInputId ? variables[current.answerInputId] : undefined
+    if (current.kind === 'question' && !current.choices?.some((choice) => choice.value === answer)) return current
+    const destination = linkedNode(tree, current, answer)
+    if (!destination && current.kind === 'question') return current
+    current = destination
   }
   return current
 }
+export function nextNode(tree: DecisionTree, node: TreeNode, answer?: string, variables: Record<string, string> = {}): TreeNode | undefined {
+  return resolveNode(tree, linkedNode(tree, node, answer), variables)
+}
+export function initialNode(tree: DecisionTree, variables: Record<string, string> = {}): TreeNode | undefined {
+  const targets = new Set(tree.edges.map((edge) => edge.target))
+  const first = tree.nodes.find((node) => node.kind === 'start' && !targets.has(node.id)) ?? tree.nodes.find((node) => !targets.has(node.id))
+  return resolveNode(tree, first, variables)
+}
 export function createSession(tree: DecisionTree, variables: Record<string, string>): ExecutionSession {
-  const firstNode = initialNode(tree); if (!firstNode) throw new Error('Arbre sans première étape.')
+  const firstNode = initialNode(tree, variables); if (!firstNode) throw new Error('Arbre sans première étape.')
   const at = new Date().toISOString()
   return snapshotSessionTrees(checkpointSession({ id: crypto.randomUUID(), treeId: tree.id, treeTitle: tree.title, createdAt: at, updatedAt: at, currentNodeId: firstNode.id, variables, steps: [], variableUpdates: [] }), [tree])
 }
@@ -84,7 +94,7 @@ export function updateSessionVariables(session: ExecutionSession, tree: Decision
 }
 export function moveToTree(session: ExecutionSession, targetTree: DecisionTree): ExecutionSession {
   const target = session.treeSnapshots?.[targetTree.id] ?? targetTree
-  const firstNode = initialNode(target)
+  const firstNode = initialNode(target, session.variables)
   if (!firstNode) throw new Error('L’arbre cible ne contient pas de première étape.')
   return snapshotSessionTrees({ ...session, treeId: target.id, treeTitle: target.title, currentNodeId: firstNode.id, updatedAt: new Date().toISOString() }, [target])
 }

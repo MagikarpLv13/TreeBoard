@@ -814,7 +814,16 @@ function TreeInspector({ tree, selectedEdgeId, removeSelectedEdge, update, addIn
 }
 
 function InputEditor({ input, update, remove }: { input: InputDefinition; update: (patch: Partial<InputDefinition>) => void; remove: () => void }) {
-  return <div className="input-editor"><input aria-label="Libellé du champ" value={input.label} onChange={(event) => update({ label: event.target.value })} /><input aria-label="Identifiant du champ" className="mono" value={input.id} onChange={(event) => update({ id: event.target.value.replace(/[^\w-]/g, '_') })} /><select aria-label={`Type de la donnée ${input.label}`} title={`Type de la donnée ${input.label}`} value={input.type} onChange={(event) => update({ type: event.target.value as InputDefinition['type'] })}>{['text', 'textarea', 'email', 'url', 'number', 'date', 'checkbox'].map((type) => <option key={type}>{type}</option>)}</select><label><input type="checkbox" checked={input.required} onChange={(event) => update({ required: event.target.checked })} /> obligatoire</label><button className="danger" title={`Supprimer la donnée « ${input.label} »`} onClick={remove}>Supprimer</button></div>
+  return <div className="input-editor">
+    <input aria-label="Libellé du champ" value={input.label} onChange={(event) => update({ label: event.target.value })} />
+    <input aria-label="Identifiant du champ" className="mono" value={input.id} onChange={(event) => update({ id: event.target.value.replace(/[^\w-]/g, '_') })} />
+    <select aria-label={`Type de la donnée ${input.label}`} title={`Type de la donnée ${input.label}`} value={input.type} onChange={(event) => update({ type: event.target.value as InputDefinition['type'] })}>
+      {['text', 'textarea', 'email', 'url', 'number', 'date', 'select', 'checkbox'].map((type) => <option key={type}>{type}</option>)}
+    </select>
+    {input.type === 'select' && <label>Options (une par ligne)<textarea value={(input.options ?? []).join('\n')} onChange={(event) => update({ options: event.target.value.split('\n') })} /></label>}
+    <label><input type="checkbox" checked={input.required} onChange={(event) => update({ required: event.target.checked })} /> obligatoire</label>
+    <button className="danger" title={`Supprimer la donnée « ${input.label} »`} onClick={remove}>Supprimer</button>
+  </div>
 }
 
 function insertTemplateAtCursor(field: HTMLTextAreaElement | null, value: string, template: string, update: (next: string) => void) {
@@ -838,19 +847,23 @@ function NodeInspector({ node, nodes, edges, inputs, availableTrees, update, upd
     setLinkText(value)
     update({ links: value.split('\n').filter(Boolean).map((line) => { const separator = line.indexOf('|'); return { id: crypto.randomUUID(), label: (separator < 0 ? line : line.slice(0, separator)).trim() || 'Lien', urlTemplate: (separator < 0 ? '' : line.slice(separator + 1)).trim() } }) })
   }
-  return <><div className="inspector-title"><div><i style={{ background: kindColor[node.kind] }} aria-hidden="true" /><h3>{nodeLabel[node.kind]}</h3></div><button className="danger icon-button" title={`Supprimer l’étape « ${node.title} »`} onClick={onRemove} aria-label={`Supprimer l’étape ${node.title}`}>×</button></div><label>Titre<input value={node.title} onChange={(event) => update({ title: event.target.value })} /></label><label>Instructions<textarea ref={instructions} value={node.body} onChange={(event) => update({ body: event.target.value })} /></label>{node.kind === 'handoff' && <section className="handoff-editor"><strong>Arbre à ouvrir</strong><span>Les données de la session (pseudo, URL, identifiants…) sont transmises à l’arbre choisi.</span><select aria-label="Arbre à ouvrir" title="Choisir l’arbre à ouvrir" value={node.targetTreeId ?? ''} onChange={(event) => update({ targetTreeId: event.target.value || undefined })}><option value="">— Choisir un arbre —</option>{availableTrees.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.title}</option>)}</select>{!availableTrees.length && <small>Créez et enregistrez d’abord un autre arbre.</small>}</section>}{node.kind === 'action' && <ActionTemplateBuilder inputs={inputs} insertInstruction={(template) => insertTemplateAtCursor(instructions.current, node.body, template, (body) => update({ body }))} insertLink={(template) => insertTemplateAtCursor(links.current, linkText, template, updateLinks)} />}{node.kind === 'action' && <section className="result-path-starter"><div><strong>Créer la suite selon le résultat</strong><span>Ajoute une décision et trois actions déjà reliées, prêtes à être renommées.</span></div><button className="primary" title="Ajouter une décision et trois actions reliées" disabled={!canCreateResultBranches} onClick={createResultBranches}>+ Ajouter les branches de résultat</button>{!canCreateResultBranches && <small>Cette action est déjà reliée à une étape.</small>}</section>}{node.kind === 'question' && <QuestionPathsEditor node={node} nodes={nodes} edges={edges} updateChoices={updateChoices} assignPath={assignPath} />}{node.kind === 'action' && <label>Liens <span className="field-hint">libellé|URL modèle</span><textarea ref={links} className="mono" placeholder="Recherche|https://…?q={{email|urlencode}}" value={linkText} onChange={(event) => updateLinks(event.target.value)} /></label>}</>
+  return <><div className="inspector-title"><div><i style={{ background: kindColor[node.kind] }} aria-hidden="true" /><h3>{nodeLabel[node.kind]}</h3></div><button className="danger icon-button" title={`Supprimer l’étape « ${node.title} »`} onClick={onRemove} aria-label={`Supprimer l’étape ${node.title}`}>×</button></div><label>Titre<input value={node.title} onChange={(event) => update({ title: event.target.value })} /></label><label>Instructions<textarea ref={instructions} value={node.body} onChange={(event) => update({ body: event.target.value })} /></label>{node.kind === 'handoff' && <section className="handoff-editor"><strong>Arbre à ouvrir</strong><span>Les données de la session (pseudo, URL, identifiants…) sont transmises à l’arbre choisi.</span><select aria-label="Arbre à ouvrir" title="Choisir l’arbre à ouvrir" value={node.targetTreeId ?? ''} onChange={(event) => update({ targetTreeId: event.target.value || undefined })}><option value="">— Choisir un arbre —</option>{availableTrees.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.title}</option>)}</select>{!availableTrees.length && <small>Créez et enregistrez d’abord un autre arbre.</small>}</section>}{node.kind === 'action' && <ActionTemplateBuilder inputs={inputs} insertInstruction={(template) => insertTemplateAtCursor(instructions.current, node.body, template, (body) => update({ body }))} insertLink={(template) => insertTemplateAtCursor(links.current, linkText, template, updateLinks)} />}{node.kind === 'action' && <section className="result-path-starter"><div><strong>Créer la suite selon le résultat</strong><span>Ajoute une décision et trois actions déjà reliées, prêtes à être renommées.</span></div><button className="primary" title="Ajouter une décision et trois actions reliées" disabled={!canCreateResultBranches} onClick={createResultBranches}>+ Ajouter les branches de résultat</button>{!canCreateResultBranches && <small>Cette action est déjà reliée à une étape.</small>}</section>}{node.kind === 'question' && <QuestionPathsEditor inputs={inputs} update={update} node={node} nodes={nodes} edges={edges} updateChoices={updateChoices} assignPath={assignPath} />}{node.kind === 'action' && <label>Liens <span className="field-hint">libellé|URL modèle</span><textarea ref={links} className="mono" placeholder="Recherche|https://…?q={{email|urlencode}}" value={linkText} onChange={(event) => updateLinks(event.target.value)} /></label>}</>
 }
 
 function QuestionPathsEditor({
   node,
   nodes,
   edges,
+  inputs,
+  update,
   updateChoices,
   assignPath,
 }: {
   node: TreeNode;
   nodes: TreeNode[];
   edges: DecisionTree["edges"];
+  inputs: InputDefinition[];
+  update: (patch: Partial<TreeNode>) => void;
   updateChoices: (choices: Choice[]) => void;
   assignPath: (choice: Choice, targetId: string) => void;
 }) {
@@ -863,6 +876,13 @@ function QuestionPathsEditor({
     );
   return (
     <section className="question-paths">
+      <label>Réponse automatique depuis une donnée
+        <select value={node.answerInputId ?? ''} onChange={(event) => update({ answerInputId: event.target.value || undefined })}>
+          <option value="">Choix manuel pendant le parcours</option>
+          {inputs.map((input) => <option key={input.id} value={input.id}>{input.label}</option>)}
+        </select>
+        <small>La valeur de la donnée doit correspondre à l’identifiant d’un chemin. Sinon, la question reste affichée.</small>
+      </label>
       <div className="question-help">
         <strong>Décider des chemins</strong>
         <p>
@@ -1238,7 +1258,7 @@ function Runner({
   const complete = (status: StepStatus, answer?: string) => {
     requestChange((base) => {
       let next = recordStep(base, currentTree, node.id, status, answer, note);
-      const destination = nextNode(currentTree, node, answer);
+      const destination = nextNode(currentTree, node, answer, base.variables);
       if (node.kind === "end" || !destination)
         next = { ...next, completedAt: new Date().toISOString() };
       else

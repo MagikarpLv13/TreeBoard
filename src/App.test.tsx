@@ -63,6 +63,26 @@ describe('lancement du parcours', () => {
 })
 
 describe('reprise et clôture du parcours', () => {
+  it('utilise le secteur choisi avant l’appel sans reposer la question pendant le parcours', () => {
+    const tree = emailExample()
+    tree.inputs = [{ id: 'secteur', label: 'Secteur', type: 'select', required: true, options: ['Détective privé', 'Cabinet d’avocats'] }]
+    tree.nodes[0].title = 'Me présenter'
+    tree.nodes[1].answerInputId = 'secteur'
+    tree.nodes[1].choices![0].value = 'Détective privé'
+    tree.nodes[1].choices![1].value = 'Cabinet d’avocats'
+    tree.nodes[2].title = 'Discours détective'
+    tree.nodes[3].title = 'Discours avocat'
+    tree.edges[1].choiceValue = 'Détective privé'
+    tree.edges[2].choiceValue = 'Cabinet d’avocats'
+    useAppStore.setState({ activeTree: tree, trees: [tree] })
+    render(<App />)
+    fireEvent.change(screen.getByRole('combobox', { name: 'Secteur *' }), { target: { value: 'Cabinet d’avocats' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Lancer l’analyse →' }))
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Me présenter')
+    fireEvent.click(screen.getByRole('button', { name: 'Terminé' }))
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Discours avocat')
+  })
+
   it('reprend une étape conservée dans la session après sa suppression de la bibliothèque', () => {
     const tree = emailExample()
     const session = createSession(tree, {})

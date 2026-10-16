@@ -18,6 +18,7 @@ export function validateTree(tree: DecisionTree, availableTrees: DecisionTree[] 
     if (tree.edges.filter((edge) => edge.source === node.id).length > 1) issues.push({ level: 'error', message: `« ${node.title || 'Cette étape'} » mène à plusieurs étapes. Ajoutez une question pour créer des branches.`, nodeId: node.id })
   })
   tree.nodes.filter((node) => node.kind === 'question').forEach((node) => {
+    if (node.answerInputId && !tree.inputs.some((input) => input.id === node.answerInputId)) issues.push({ level: 'error', message: `La donnée « ${node.answerInputId} » utilisée pour répondre à « ${node.title} » n’existe pas.`, nodeId: node.id })
     const choices = node.choices ?? []
     if (!choices.length) issues.push({ level: 'error', message: `Ajoutez au moins une réponse à « ${node.title || 'cette question'} ».`, nodeId: node.id })
     const values = new Set<string>()

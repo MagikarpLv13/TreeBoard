@@ -8,7 +8,7 @@ export type StepStatus = 'completed' | 'skipped' | 'inconclusive' | 'later' | 'b
 export interface InputDefinition { id: string; label: string; type: InputKind; required: boolean; description?: string; defaultValue?: string; options?: string[] }
 export interface ToolLink { id: string; label: string; urlTemplate: string }
 export interface Choice { id: string; label: string; value: string }
-export interface TreeNode { id: string; kind: NodeKind; title: string; body: string; position: { x: number; y: number }; choices?: Choice[]; links?: ToolLink[]; targetTreeId?: string }
+export interface TreeNode { id: string; kind: NodeKind; title: string; body: string; position: { x: number; y: number }; choices?: Choice[]; links?: ToolLink[]; targetTreeId?: string; answerInputId?: string }
 export interface TreeEdge { id: string; source: string; target: string; choiceValue?: string; sourceHandle?: string; targetHandle?: string }
 export interface DecisionTree { id: string; title: string; description: string; schemaVersion: 1; createdAt: string; updatedAt: string; isExample?: boolean; inputs: InputDefinition[]; nodes: TreeNode[]; edges: TreeEdge[] }
 export interface StepExecution { id: string; nodeId: string; at: string; status: StepStatus; answer?: string; note?: string; treeId?: string; treeTitle?: string; nodeTitle?: string }
@@ -28,7 +28,7 @@ export const blankTree = (): DecisionTree => {
 export const DecisionTreeSchema = z.object({
   id: z.string().uuid(), title: z.string().min(1).max(160), description: z.string().max(5000), schemaVersion: z.literal(1), createdAt: z.string().datetime(), updatedAt: z.string().datetime(), isExample: z.boolean().optional(),
   inputs: z.array(z.object({ id: z.string().min(1), label: z.string().min(1), type: z.enum(['text', 'textarea', 'email', 'url', 'number', 'date', 'select', 'checkbox']), required: z.boolean(), description: z.string().optional(), defaultValue: z.string().optional(), options: z.array(z.string()).optional() })).max(100),
-  nodes: z.array(z.object({ id: z.string().uuid(), kind: z.enum(NODE_TYPES), title: z.string().max(250), body: z.string().max(20000), position: z.object({ x: z.number(), y: z.number() }), choices: z.array(z.object({ id: z.string().uuid(), label: z.string(), value: z.string() })).optional(), links: z.array(z.object({ id: z.string().uuid(), label: z.string(), urlTemplate: z.string() })).optional(), targetTreeId: z.string().uuid().optional() })).max(500),
+  nodes: z.array(z.object({ id: z.string().uuid(), kind: z.enum(NODE_TYPES), title: z.string().max(250), body: z.string().max(20000), position: z.object({ x: z.number(), y: z.number() }), choices: z.array(z.object({ id: z.string().uuid(), label: z.string(), value: z.string() })).optional(), links: z.array(z.object({ id: z.string().uuid(), label: z.string(), urlTemplate: z.string() })).optional(), targetTreeId: z.string().uuid().optional(), answerInputId: z.string().min(1).optional() })).max(500),
   edges: z.array(z.object({ id: z.string().uuid(), source: z.string().uuid(), target: z.string().uuid(), choiceValue: z.string().optional(), sourceHandle: z.string().optional(), targetHandle: z.string().optional() })).max(1000),
 })
 
